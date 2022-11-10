@@ -26,6 +26,14 @@ dependencies:
   - inline-c
   - template-haskell
 
+extra-libraries:
+  - m
+  - z
+  - pthread
+  - crypto
+  - ssl
+  - aerospike
+
 library:
   source-dirs: src
   dependencies:
@@ -33,12 +41,6 @@ library:
     - containers
     - inline-c
     - template-haskell
-  extra-libraries:
-    - aerospike
-    - crypto
-    - ssl
-    - m
-    - z
   build-tools:
     - c2hs
 

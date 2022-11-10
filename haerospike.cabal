@@ -12,7 +12,7 @@ bug-reports:    https://github.com/Diamondy4/haerospike/issues
 author:         Diamondy4
 maintainer:     Diamondy4@hotmail.com
 copyright:      2022 Diamondy4
-license:        BSD3
+license:        MIT
 license-file:   LICENSE
 build-type:     Simple
 extra-source-files:
@@ -28,16 +28,18 @@ library
       Database.Aerospike
       Database.Aerospike.Internal
       Database.Aerospike.Internal.Raw
+      Database.Aerospike.Operations
   other-modules:
       Paths_haerospike
   hs-source-dirs:
       src
   extra-libraries:
-      aerospike
-      crypto
-      ssl
       m
       z
+      pthread
+      crypto
+      ssl
+      aerospike
   build-tools:
       c2hs
   build-depends:
@@ -55,6 +57,13 @@ executable aerospike-example-exe
   hs-source-dirs:
       example
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  extra-libraries:
+      m
+      z
+      pthread
+      crypto
+      ssl
+      aerospike
   build-depends:
       base >=4.7 && <5
     , bytestring
@@ -72,6 +81,13 @@ test-suite aerospike-test
   hs-source-dirs:
       test
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  extra-libraries:
+      m
+      z
+      pthread
+      crypto
+      ssl
+      aerospike
   build-depends:
       base >=4.7 && <5
     , bytestring
