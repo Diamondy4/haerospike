@@ -58,7 +58,7 @@ getStrBinUpdateTTL ::
     ByteString ->
     ByteString ->
     Int ->
-    IO (Either AerospikeError ByteString)
+    IO (Either AerospikeError (Maybe ByteString))
 getStrBinUpdateTTL as ns set key bin (fromIntegral -> ttlSec) = alloca @AerospikeError $ \errTmp -> alloca @CString $ \strTmp -> do
     status <-
         toEnum @AerospikeStatus . fromIntegral
@@ -86,7 +86,12 @@ getStrBinUpdateTTL as ns set key bin (fromIntegral -> ttlSec) = alloca @Aerospik
         return status;
     }
 
-    //char* sbin = as_record_get_str(&rec, $bs-ptr:bin);
+    as_bin_value* value = as_record_get(&rec, $bs-ptr:bin);
+    if (value == NULL) {
+        return AEROSPIKE_ERR_BIN_NOT_FOUND;
+    }
+    
+    //char* sbin = as_record_get_str(&rec, $bs-ptr:bin); return to haskell with by pointer
     *$(char** strTmp) = as_record_get_str(&rec, $bs-ptr:bin);
 
     return status;
@@ -95,5 +100,7 @@ getStrBinUpdateTTL as ns set key bin (fromIntegral -> ttlSec) = alloca @Aerospik
     case status of
         AerospikeOk -> do
             str <- peek strTmp >>= BS.packCString
-            return . Right $ str
+            return . Right . Just $ str
+        AerospikeErrBinNotFound -> pure $ Right Nothing
+        AerospikeErrRecordNotFound -> pure $ Right Nothing
         _ -> Left <$> peek errTmp

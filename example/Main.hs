@@ -19,9 +19,9 @@ main = do
     as <- createAerospikeClient ip 3000
     conRes <- connectAerospikeClient as
     print conRes
-    -- val <- setStrBin as ns set key binName binStrData 120
+    val <- setStrBin as ns set key binName binStrData 120
+    print val
     val <- getStrBinUpdateTTL as ns set key binName 120
-
     print val
 
     print "done"
