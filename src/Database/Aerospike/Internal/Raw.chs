@@ -10,6 +10,7 @@ import Foreign.Storable
 import Foreign.C.String
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Control.Exception (Exception)
 
 #include <aerospike/aerospike.h>
 #include <aerospike/as_status.h>
@@ -28,6 +29,8 @@ data AerospikeError = AerospikeError
   , line :: Int
   , message :: ByteString
   } deriving (Show)
+
+instance Exception AerospikeError
 
 bsToCString :: ByteString -> IO CString
 bsToCString bs = BS.useAsCString bs {# call unsafe strdup #}
