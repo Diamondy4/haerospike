@@ -16,34 +16,40 @@ import Foreign
 import Foreign.C
 import GHC.IO.Handle.Text (memcpy)
 import qualified Language.C.Inline as C
-import Text.Printf (printf)
+import qualified Data.Text.Foreign as TF
+import Data.Text (Text)
 
 C.context (C.baseCtx <> C.bsCtx <> C.fptrCtx <> asCtx)
 C.include "<aerospike/aerospike.h>"
 C.include "<aerospike/aerospike_key.h>"
 
-setStrBin ::
+setBinBytesToString ::
     Aerospike ->
     ByteString ->
     ByteString ->
     ByteString ->
     ByteString ->
-    ByteString ->
+    Text ->
     Int ->
     IO (Either AerospikeError ())
-setStrBin as ns set key binName binStrData (fromIntegral -> ttlSec) = alloca @AerospikeError $ \errTmp -> do
+setBinBytesToString as ns set key binName binStrData (fromIntegral -> ttlSec) = 
+    alloca @AerospikeError $ \errTmp -> 
+    TF.withCStringLen binStrData $ \(cBinStrData, fromIntegral -> cBinStrDataLen) -> do
     status <-
         toEnum @AerospikeStatus . fromIntegral
             <$> [C.block| int {
     as_key key;
-    as_key_init_str(&key, $bs-ptr:ns, $bs-ptr:set, $bs-ptr:key);
+    as_key_init_raw(&key, $bs-cstr:ns, $bs-cstr:set, $bs-ptr:key, $bs-len:key);
 
     as_record rec;
     as_record_inita(&rec, 1);
      
     rec.ttl = $(int ttlSec);
+
+    as_string str;
+    as_string_init_wlen(&str, $(char* cBinStrData), $(int cBinStrDataLen), false);
     
-    as_record_set_str(&rec, $bs-ptr:binName, $bs-ptr:binStrData);
+    as_record_set_string(&rec, $bs-cstr:binName, &str);
     
     return aerospike_key_put($fptr-ptr:(aerospike* as), $(as_error* errTmp), NULL, &key, &rec);
     }|]
@@ -51,25 +57,28 @@ setStrBin as ns set key binName binStrData (fromIntegral -> ttlSec) = alloca @Ae
         AerospikeOk -> return . Right $ ()
         _ -> Left <$> peek errTmp
 
-getStrBinUpdateTTL ::
+getBinBytesToStringUpdateTTL ::
     Aerospike ->
     ByteString ->
     ByteString ->
     ByteString ->
     ByteString ->
     Int ->
-    IO (Either AerospikeError (Maybe ByteString))
-getStrBinUpdateTTL as ns set key bin (fromIntegral -> ttlSec) = alloca @AerospikeError $ \errTmp -> alloca @CString $ \strTmp -> do
+    IO (Either AerospikeError (Maybe Text))
+getBinBytesToStringUpdateTTL as ns set key bin (fromIntegral -> ttlSec) =
+    alloca @AerospikeError $ \errTmp ->
+    alloca @CString $ \strTmp ->
+    alloca @CInt $ \strLenTmp -> do
     status <-
         toEnum @AerospikeStatus . fromIntegral
             <$> [C.block| int {
     as_key key;
-    as_key_init_str(&key, $bs-ptr:ns, $bs-ptr:set, $bs-ptr:key);
+    as_key_init_raw(&key, $bs-cstr:ns, $bs-cstr:set, $bs-ptr:key, $bs-len:key);
 
     as_record rec;
     as_record *recPtr = as_record_inita(&rec, 1);
     
-    //const char* bins[] = { $bs-ptr:bin, NULL };
+    //const char* bins[] = { $bs-cstr:bin, NULL };
     //as_status status = aerospike_key_select($fptr-ptr:(aerospike* as), $(as_error* errTmp), NULL, &key, bins, &recPtr);
 
     as_operations ops;
@@ -77,7 +86,7 @@ getStrBinUpdateTTL as ns set key bin (fromIntegral -> ttlSec) = alloca @Aerospik
 
     ops.ttl = $(int ttlSec);
 
-    as_operations_add_read(&ops, $bs-ptr:bin);
+    as_operations_add_read(&ops, $bs-cstr:bin);
     as_operations_add_touch(&ops);
 
     as_status status = aerospike_key_operate($fptr-ptr:(aerospike* as), $(as_error* errTmp), NULL, &key, &ops, &recPtr);
@@ -86,21 +95,26 @@ getStrBinUpdateTTL as ns set key bin (fromIntegral -> ttlSec) = alloca @Aerospik
         return status;
     }
 
-    as_bin_value* value = as_record_get(&rec, $bs-ptr:bin);
+    as_string * value = as_record_get_string(&rec, $bs-cstr:bin);
     if (value == NULL) {
         return AEROSPIKE_ERR_BIN_NOT_FOUND;
     }
     
-    //char* sbin = as_record_get_str(&rec, $bs-ptr:bin); return to haskell with by pointer
-    *$(char** strTmp) = as_record_get_str(&rec, $bs-ptr:bin);
+    //char* sbin = as_record_get_str(&rec, $bs-cstr:bin); return to haskell with by pointer
+    //*$(char** strTmp) = as_record_get_string(&rec, $bs-cstr:bin);
+
+    *$(char** strTmp) = as_string_get(value);
+    *$(int* strLenTmp) = as_string_len(value);
 
     return status;
     //as_record_destroy(rec); is not needed - rec on stack
     }|]
     case status of
         AerospikeOk -> do
-            str <- peek strTmp >>= BS.packCString
-            return . Right . Just $ str
+            str <- peek strTmp
+            len <- peek strLenTmp
+            txt <-  TF.peekCStringLen (str, fromIntegral len)
+            return . Right . Just $ txt
         AerospikeErrBinNotFound -> pure $ Right Nothing
         AerospikeErrRecordNotFound -> pure $ Right Nothing
         _ -> Left <$> peek errTmp
