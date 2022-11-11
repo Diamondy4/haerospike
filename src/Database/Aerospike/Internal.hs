@@ -20,4 +20,5 @@ asTypesTable :: Map C.TypeSpecifier TH.TypeQ
 asTypesTable =
   [ (C.TypeName "aerospike", [t|Aerospike|])
   , (C.TypeName "as_error", [t|AerospikeError|])
+  , (C.TypeName "as_log_level", [t|AerospikeLogLevel|])
   ]

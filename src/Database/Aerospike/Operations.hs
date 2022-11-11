@@ -36,14 +36,14 @@ setStrBin as ns set key binName binStrData (fromIntegral -> ttlSec) = alloca @Ae
         toEnum @AerospikeStatus . fromIntegral
             <$> [C.block| int {
     as_key key;
-    as_key_init_str(&key, $bs-ptr:ns, $bs-ptr:set, $bs-ptr:key);
+    as_key_init_str(&key, $bs-cstr:ns, $bs-cstr:set, $bs-cstr:key);
 
     as_record rec;
     as_record_inita(&rec, 1);
      
     rec.ttl = $(int ttlSec);
     
-    as_record_set_str(&rec, $bs-ptr:binName, $bs-ptr:binStrData);
+    as_record_set_str(&rec, $bs-cstr:binName, $bs-cstr:binStrData);
     
     return aerospike_key_put($fptr-ptr:(aerospike* as), $(as_error* errTmp), NULL, &key, &rec);
     }|]
@@ -64,12 +64,12 @@ getStrBinUpdateTTL as ns set key bin (fromIntegral -> ttlSec) = alloca @Aerospik
         toEnum @AerospikeStatus . fromIntegral
             <$> [C.block| int {
     as_key key;
-    as_key_init_str(&key, $bs-ptr:ns, $bs-ptr:set, $bs-ptr:key);
+    as_key_init_str(&key, $bs-cstr:ns, $bs-cstr:set, $bs-cstr:key);
 
     as_record rec;
     as_record *recPtr = as_record_inita(&rec, 1);
     
-    //const char* bins[] = { $bs-ptr:bin, NULL };
+    //const char* bins[] = { $bs-cstr:bin, NULL };
     //as_status status = aerospike_key_select($fptr-ptr:(aerospike* as), $(as_error* errTmp), NULL, &key, bins, &recPtr);
 
     as_operations ops;
@@ -77,7 +77,7 @@ getStrBinUpdateTTL as ns set key bin (fromIntegral -> ttlSec) = alloca @Aerospik
 
     ops.ttl = $(int ttlSec);
 
-    as_operations_add_read(&ops, $bs-ptr:bin);
+    as_operations_add_read(&ops, $bs-cstr:bin);
     as_operations_add_touch(&ops);
 
     as_status status = aerospike_key_operate($fptr-ptr:(aerospike* as), $(as_error* errTmp), NULL, &key, &ops, &recPtr);
@@ -86,13 +86,13 @@ getStrBinUpdateTTL as ns set key bin (fromIntegral -> ttlSec) = alloca @Aerospik
         return status;
     }
 
-    as_bin_value* value = as_record_get(&rec, $bs-ptr:bin);
+    as_bin_value* value = as_record_get(&rec, $bs-cstr:bin);
     if (value == NULL) {
         return AEROSPIKE_ERR_BIN_NOT_FOUND;
     }
     
-    //char* sbin = as_record_get_str(&rec, $bs-ptr:bin); return to haskell with by pointer
-    *$(char** strTmp) = as_record_get_str(&rec, $bs-ptr:bin);
+    //char* sbin = as_record_get_str(&rec, $bs-cstr:bin); return to haskell with by pointer
+    *$(char** strTmp) = as_record_get_str(&rec, $bs-cstr:bin);
 
     return status;
     //as_record_destroy(rec); is not needed - rec on stack

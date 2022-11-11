@@ -14,10 +14,13 @@ import Control.Exception (Exception)
 
 #include <aerospike/aerospike.h>
 #include <aerospike/as_status.h>
+#include <aerospike/as_log.h>
 
 {# context lib="aerospike" #}
 
 {# enum as_status as AerospikeStatus {underscoreToCase} deriving (Eq, Show) #}
+
+{# enum as_log_level as AerospikeLogLevel {underscoreToCase} deriving (Eq, Show) #}
 
 {# pointer *aerospike as Aerospike foreign newtype #}
 
