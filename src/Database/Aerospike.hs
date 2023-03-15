@@ -44,14 +44,14 @@ C.verbatim
     \    return as_log_hs_callback(level, func, file, line, msg);\n\
     \}"
 
-createAerospikeClient :: ByteString -> Int -> IO Aerospike
-createAerospikeClient address port' = do
-    let port = fromIntegral port'
+createAerospikeClient :: ByteString -> Int -> Int -> IO Aerospike
+createAerospikeClient address (fromIntegral -> port) (fromIntegral -> connCount) = do
     as <-
         [C.block| aerospike* {
     as_config config;
     as_config_init(&config);
     as_config_add_host(&config, $bs-cstr:address, $(int port));
+    config.max_conns_per_node = $(int connCount);
     aerospike* as = aerospike_new(&config);
     return as;
     }|]
