@@ -15,6 +15,7 @@ import Control.Exception (Exception)
 #include <aerospike/aerospike.h>
 #include <aerospike/as_status.h>
 #include <aerospike/as_log.h>
+#include <aerospike/aerospike_batch.h>
 
 {# context lib="aerospike" #}
 
@@ -23,6 +24,8 @@ import Control.Exception (Exception)
 {# enum as_log_level as AerospikeLogLevel {underscoreToCase} deriving (Eq, Show) #}
 
 {# pointer *aerospike as Aerospike foreign newtype #}
+
+{# pointer *as_batch_records as AsBatchRecords foreign newtype #}
 
 data AerospikeError = AerospikeError
   { code :: AerospikeStatus

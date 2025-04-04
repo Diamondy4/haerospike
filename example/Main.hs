@@ -5,10 +5,10 @@ module Main where
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import Database.Aerospike
-import Database.Aerospike.Operations
-import Database.Aerospike.Internal.Raw
 import Data.Text (Text)
+import Database.Aerospike
+import Database.Aerospike.Internal.Raw
+import Database.Aerospike.Operations
 
 main :: IO ()
 main = do
@@ -24,6 +24,8 @@ main = do
     conRes <- connectAerospikeClient as
     print conRes
     val <- setBinBytesToString as ns set key binName binStrData 120
+    print val
+    val <- getBinBytesToStringUpdateTTL as ns set key binName 120
     print val
     val <- getBinBytesToStringUpdateTTL as ns set key binName 120
     print val
