@@ -6,6 +6,7 @@
 
 module Database.Aerospike.Operations where
 
+import Control.Monad (forM, forM_)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
@@ -130,38 +131,80 @@ getBatchedKeysAllBins ::
     [ByteString] ->
     IO (Either AerospikeError [[(ByteString, ByteString)]])
 getBatchedKeysAllBins as ns set keys = do
-    let keys_len = length keys
-    alloca @AsBatchRecords $ \records ->
-        alloca @AerospikeError $ \errTmp -> do
-            _ <-
-                [C.block| void {
-                as_batch_records_inita($fptr-ptr:(as_batch_records* records), $(int keys_len));
-                }|]
+    let keysLen = CInt $ toEnum $ length keys
+    alloca @AerospikeError $ \errTmp -> do
+        records <- mkAsBatchRecords
 
-            forM_ keys $ \key -> do
-                [C.block| void {
-                as_batch_read_record* record = as_batch_read_reserve($fptr-ptr:(as_batch_records* records));
-                as_key_init(&record->key, $bs-cstr:ns, $bs-cstr:set, $bs-cstr:key);
-                record->read_all_bins = true;
+        _ <-
+            [C.block| void {
+            as_batch_records_inita($fptr-ptr:(as_batch_records* records), $(int keysLen));
             }|]
 
-            status <-
-                toEnum @AerospikeStatus . fromIntegral
-                    <$> [C.block| int { 
-                as_status status = aerospike_batch_read(
-                    $fptr-ptr:(aerospike* as), 
-                    $(as_error* errTmp), 
-                    NULL, 
-                    $fptr-ptr:(as_batch_records* records)
-                );
-                as_batch_records_destroy($fptr-ptr:(as_batch_records* records));
-                return status;
-                }|]
+        forM_ keys $ \key -> do
+            [C.block| void {
+            as_batch_read_record* record = as_batch_read_reserve($fptr-ptr:(as_batch_records* records));
+            as_key_init(&record->key, $bs-cstr:ns, $bs-cstr:set, $bs-cstr:key);
+            record->read_all_bins = true;
+            }|]
 
-            case status of
-                AerospikeOk -> do
-                    str <- peek strTmp
-                    len <- peek strLenTmp
-                    txt <- TF.peekCStringLen (str, fromIntegral len)
-                    return . Right . Just $ txt
-                _ -> Left <$> peek errTmp
+        status <-
+            toEnum @AerospikeStatus . fromIntegral
+                <$> [C.block| int { 
+            return aerospike_batch_read(
+                $fptr-ptr:(aerospike* as), 
+                $(as_error* errTmp), 
+                NULL, 
+                $fptr-ptr:(as_batch_records* records)
+            );
+            }|]
+
+        case status of
+            AerospikeOk -> do
+                alloca @CString $ \binValue ->
+                    alloca @CInt $ \binValueLen ->
+                        alloca @CString $ \binName ->
+                            alloca @CInt $ \binNameLen -> do
+                                -- TODO: check records.list.size instead of rely on key_len?
+                                res <- forM [0 .. keysLen - 1] $ \i -> do
+                                    binsCount <-
+                                        [C.block| int {
+                                        as_vector* list = &$fptr-ptr:(as_batch_records* records)->list;
+                                        as_batch_read_record* r = as_vector_get(list, $(int i));
+                                        return r->record.bins.size;   
+                                    }|]
+
+                                    forM [0 .. binsCount - 1] $ \binIx -> do
+                                        [C.block| void {
+                                            as_vector* list = &$fptr-ptr:(as_batch_records* records)->list;
+                                            as_batch_read_record* r = as_vector_get(list, $(int i));
+                                            as_bin* bin = r->record.bins.entries + $(int binIx);
+                                            
+                                            char* bin_name = as_bin_get_name(bin);
+                                            *$(char** binName) = bin_name;
+                                            *$(int* binNameLen) = strlen(bin_name);
+
+                                            as_string* value = as_record_get_string(&r->record, bin_name);
+                                            *$(char** binValue) = as_string_get(value);
+                                            *$(int* binValueLen) = as_string_len(value);
+                                        }|]
+
+                                        bsBinName <- byteStringFromParts binName binNameLen
+                                        bsBinValue <- byteStringFromParts binValue binValueLen
+                                        pure (bsBinName, bsBinValue)
+
+                                return . Right $ res
+            _ -> do
+                [C.block| void { as_batch_records_destroy($fptr-ptr:(as_batch_records* records)); }|]
+                Left <$> peek errTmp
+
+byteStringFromParts :: Ptr CString -> Ptr CInt -> IO BS.ByteString
+byteStringFromParts strPtr lenPtr = do
+    str <- peek strPtr
+    len <- peek lenPtr
+    BS.packCStringLen (str, fromIntegral len)
+
+-- TODO: add finalizer
+mkAsBatchRecords :: IO AsBatchRecords
+mkAsBatchRecords = do
+    records <- [C.block| as_batch_records* { return malloc(sizeof(as_batch_records)); }|]
+    AsBatchRecords <$> newForeignPtr_ records

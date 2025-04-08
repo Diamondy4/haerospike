@@ -4,7 +4,7 @@
 module Main where
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
+import Data.ByteString qualified as BS
 import Data.Text (Text)
 import Database.Aerospike
 import Database.Aerospike.Internal.Raw
@@ -29,5 +29,8 @@ main = do
     print val
     val <- getBinBytesToStringUpdateTTL as ns set key binName 120
     print val
+
+    vals <- getBatchedKeysAllBins as ns set [key]
+    print vals
 
     print "done"
