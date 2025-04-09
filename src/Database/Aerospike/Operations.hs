@@ -8,24 +8,26 @@ module Database.Aerospike.Operations where
 
 import Control.Monad (forM, forM_)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import qualified Data.Map.Strict as Map
+import Data.ByteString qualified as BS
+import Data.Map.Strict qualified as Map
 import Data.Proxy
 import Data.Text (Text)
-import qualified Data.Text.Foreign as TF
-import qualified Data.Vector.Storable as V
-import qualified Data.Vector.Storable.Mutable as VM
+import Data.Text.Foreign qualified as TF
+import Data.Vector.Storable qualified as V
+import Data.Vector.Storable.Mutable qualified as VM
 import Database.Aerospike.Internal
 import Database.Aerospike.Internal.Raw
 import Foreign
 import Foreign.C
 import GHC.IO.Handle.Text (memcpy)
-import qualified Language.C.Inline as C
+import Language.C.Inline qualified as C
 
 C.context (C.baseCtx <> C.bsCtx <> C.fptrCtx <> asCtx <> C.vecCtx)
 C.include "<aerospike/aerospike.h>"
 C.include "<aerospike/aerospike_key.h>"
 C.include "<aerospike/aerospike_batch.h>"
+C.include "<aerospike/as_vector.h>"
+C.include "<stdio.h>"
 
 setBinBytesToString ::
     Aerospike ->
@@ -131,21 +133,21 @@ getBatchedKeysAllBins ::
     [ByteString] ->
     IO (Either AerospikeError [[(ByteString, ByteString)]])
 getBatchedKeysAllBins as ns set keys = do
-    let keysLen = CInt $ toEnum $ length keys
+    let keysLen = length keys
+    let ckeysLen = CInt $ toEnum keysLen
     alloca @AerospikeError $ \errTmp -> do
-        records <- mkAsBatchRecords
+        records <- mkAsBatchRecords keysLen
 
-        _ <-
-            [C.block| void {
-            as_batch_records_inita($fptr-ptr:(as_batch_records* records), $(int keysLen));
-            }|]
+        print "init as batch record"
 
         forM_ keys $ \key -> do
             [C.block| void {
             as_batch_read_record* record = as_batch_read_reserve($fptr-ptr:(as_batch_records* records));
-            as_key_init(&record->key, $bs-cstr:ns, $bs-cstr:set, $bs-cstr:key);
+            as_key_init_raw(&record->key, $bs-cstr:ns, $bs-cstr:set, $bs-ptr:key, $bs-len:key);
             record->read_all_bins = true;
             }|]
+
+        print "init keys"
 
         status <-
             toEnum @AerospikeStatus . fromIntegral
@@ -158,6 +160,8 @@ getBatchedKeysAllBins as ns set keys = do
             );
             }|]
 
+        print status
+
         case status of
             AerospikeOk -> do
                 alloca @CString $ \binValue ->
@@ -165,13 +169,17 @@ getBatchedKeysAllBins as ns set keys = do
                         alloca @CString $ \binName ->
                             alloca @CInt $ \binNameLen -> do
                                 -- TODO: check records.list.size instead of rely on key_len?
-                                res <- forM [0 .. keysLen - 1] $ \i -> do
+                                -- TODO: check status of each key request
+                                res <- forM [0 .. ckeysLen - 1] $ \i -> do
                                     binsCount <-
                                         [C.block| int {
                                         as_vector* list = &$fptr-ptr:(as_batch_records* records)->list;
                                         as_batch_read_record* r = as_vector_get(list, $(int i));
+                                        printf("status = %d, n_bin_names = %d\n", r->result, r->n_bin_names);
                                         return r->record.bins.size;   
                                     }|]
+
+                                    print binsCount
 
                                     forM [0 .. binsCount - 1] $ \binIx -> do
                                         [C.block| void {
@@ -193,9 +201,7 @@ getBatchedKeysAllBins as ns set keys = do
                                         pure (bsBinName, bsBinValue)
 
                                 return . Right $ res
-            _ -> do
-                [C.block| void { as_batch_records_destroy($fptr-ptr:(as_batch_records* records)); }|]
-                Left <$> peek errTmp
+            _ -> Left <$> peek errTmp
 
 byteStringFromParts :: Ptr CString -> Ptr CInt -> IO BS.ByteString
 byteStringFromParts strPtr lenPtr = do
@@ -203,8 +209,9 @@ byteStringFromParts strPtr lenPtr = do
     len <- peek lenPtr
     BS.packCStringLen (str, fromIntegral len)
 
--- TODO: add finalizer
-mkAsBatchRecords :: IO AsBatchRecords
-mkAsBatchRecords = do
-    records <- [C.block| as_batch_records* { return malloc(sizeof(as_batch_records)); }|]
-    AsBatchRecords <$> newForeignPtr_ records
+mkAsBatchRecords :: Int -> IO AsBatchRecords
+mkAsBatchRecords keys = do
+    let ckeys = CInt $ toEnum keys
+    records <- [C.block| as_batch_records* { return as_batch_records_create($(int ckeys)); }|]
+    finalizer <- [C.exp|void (*as_batch_records_destroy)(as_batch_records*) { &as_batch_records_destroy }|]
+    AsBatchRecords <$> newForeignPtr finalizer records

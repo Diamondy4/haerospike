@@ -27,15 +27,16 @@ common warnings
 
 common c-deps
   extra-libraries:
+    aerospike
     m
     z
     pthread
     crypto
     ssl
-    aerospike
 
 common extensions
-  default-language: GHC2021
+  default-language:   GHC2021
+  default-extensions: ImportQualifiedPost
 
 library
   import:             warnings, c-deps, extensions
@@ -66,7 +67,7 @@ executable aerospike-example-exe
   main-is:        Main.hs
   other-modules:  Paths_haerospike
   hs-source-dirs: example
-  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  ghc-options:    -dynamic -threaded -rtsopts -with-rtsopts=-N
   build-depends:
     , base              >=4.7 && <5
     , bytestring

@@ -30,7 +30,21 @@ main = do
     val <- getBinBytesToStringUpdateTTL as ns set key binName 120
     print val
 
+    let binA = "binA"
+    let binB = "binB"
+    let binAValue = "binAValue"
+    let binBValue = "binBValue"
+
+    val <- setBinBytesToString as ns set key binA binAValue 120
+    print val
+
+    val <- setBinBytesToString as ns set key binB binBValue 120
+    print val
+
     vals <- getBatchedKeysAllBins as ns set [key]
     print vals
+
+    val <- getBinBytesToStringUpdateTTL as ns set key binName 120
+    print val
 
     print "done"
