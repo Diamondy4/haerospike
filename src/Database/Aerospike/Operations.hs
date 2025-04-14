@@ -145,11 +145,9 @@ mkAsBatchRecords keys = do
 -- namespace -> set -> [key] -> [[(bin_name, bin_value)]]
 getBatchedKeysAllBinsValues ::
     Aerospike ->
-    ByteString ->
-    ByteString ->
     [Key] ->
     IO (Either AerospikeError [Maybe [(ByteString, Maybe Value)]])
-getBatchedKeysAllBinsValues as ns set keys = do
+getBatchedKeysAllBinsValues as keys = do
     let keysLen = length keys
     let ckeysLen = CInt $ toEnum keysLen
     alloca @AerospikeError $ \errTmp -> do
@@ -164,7 +162,7 @@ getBatchedKeysAllBinsValues as ns set keys = do
                 }|]
 
             asKey <- AsKey <$> newForeignPtr_ asKeyPtr
-            initKey asKey ns set key
+            initKey asKey key
 
         status <-
             toEnum @AerospikeStatus . fromIntegral
@@ -227,12 +225,10 @@ getBatchedKeysAllBinsValues as ns set keys = do
 
 setKey ::
     Aerospike ->
-    ByteString ->
-    ByteString ->
     Key ->
     [(ByteString, Value)] ->
     IO (Either AerospikeError ())
-setKey as ns set key bins = do
+setKey as key bins = do
     let binsLen = CInt $ toEnum $ length bins
     asRecordPtr <- [C.block| as_record* { return as_record_new($(int binsLen)); }|]
     finalizer <- [C.exp|void (*as_record_destroy)(as_record*) { &as_record_destroy }|]
@@ -247,7 +243,7 @@ setKey as ns set key bins = do
     -- FIXME: should definitely have function that create whole key
     asKeyPtr <- [C.block| as_key* { return (as_key*)malloc(sizeof(as_key)); }|]
     asKey <- AsKey <$> newForeignPtr_ asKeyPtr
-    initKey asKey ns set key
+    initKey asKey key
 
     alloca @AerospikeError $ \errTmp -> do
         status <-

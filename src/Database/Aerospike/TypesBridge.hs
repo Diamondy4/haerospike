@@ -36,9 +36,12 @@ C.include "<aerospike/as_orderedmap.h>"
 C.include "<aerospike/as_arraylist.h>"
 C.include "<string.h>"
 
-initKey :: AsKey -> ByteString -> ByteString -> Key -> IO ()
-initKey ptr ns set key =
-    case key of
+initKey :: AsKey -> Key -> IO ()
+initKey ptr key = do
+    let ns = key.namespace
+    let set = key.set
+
+    case key.pKey of
         KInteger k -> do
             let cK = CInt $ toEnum k
             [C.block| void {

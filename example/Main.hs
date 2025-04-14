@@ -43,13 +43,17 @@ main = do
     val <- setBinBytesToString as ns set key binB binBValue 120
     print val
 
-    vals <- getBatchedKeysAllBinsValues as ns set [KBytes key, KString "key2", KString "key3"]
+    let key1 = MkKey ns set (KBytes key)
+    let key2 = MkKey ns set (KString "key2")
+    let key3 = MkKey ns set (KString "key3")
+
+    vals <- getBatchedKeysAllBinsValues as [key1, key2, key3]
     print vals
 
-    res <- setKey as ns set (KBytes key) [(binA, VString "binAValueModified"), (binB, VString "binBValueModified")]
+    res <- setKey as key1 [(binA, VString "binAValueModified"), (binB, VString "binBValueModified")]
     print res
 
-    vals <- getBatchedKeysAllBinsValues as ns set [KBytes key]
+    vals <- getBatchedKeysAllBinsValues as [key1]
     print vals
 
     print "done"

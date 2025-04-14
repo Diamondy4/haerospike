@@ -41,6 +41,7 @@ common extensions
     DerivingStrategies
     ImportQualifiedPost
     LambdaCase
+    OverloadedRecordDot
 
 library
   import:             warnings, c-deps, extensions

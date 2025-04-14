@@ -5,11 +5,17 @@ module Database.Aerospike.Key where
 import Data.ByteString (ByteString)
 import Data.Text (Text)
 
-data Key
+data PKey
     = KInteger Int
     | KString Text
     | KBytes ByteString
     deriving (Show)
 
 class ToKey a where
-    toKey :: a -> Key
+    toKey :: a -> PKey
+
+data Key = MkKey
+    { namespace :: ByteString
+    , set :: ByteString
+    , pKey :: PKey
+    }
