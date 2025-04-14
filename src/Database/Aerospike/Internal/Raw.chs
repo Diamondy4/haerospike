@@ -27,6 +27,18 @@ import Control.Exception (Exception)
 
 {# pointer *as_batch_records as AsBatchRecords foreign newtype #}
 
+{# pointer *as_record as AsRecord foreign newtype #}
+
+{# pointer *as_bin_value as AsBinValue foreign newtype #}
+
+{# pointer *as_val as AsVal foreign newtype #}
+
+{# pointer *as_list as AsList foreign newtype #}
+
+{# pointer *as_map as AsMap foreign newtype #}
+
+{# pointer *as_key as AsKey foreign newtype #}
+
 data AerospikeError = AerospikeError
   { code :: AerospikeStatus
   , file :: ByteString

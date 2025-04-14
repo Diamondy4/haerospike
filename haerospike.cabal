@@ -36,7 +36,11 @@ common c-deps
 
 common extensions
   default-language:   GHC2021
-  default-extensions: ImportQualifiedPost
+  default-extensions:
+    DeriveAnyClass
+    DerivingStrategies
+    ImportQualifiedPost
+    LambdaCase
 
 library
   import:             warnings, c-deps, extensions
@@ -46,7 +50,10 @@ library
     Database.Aerospike
     Database.Aerospike.Internal
     Database.Aerospike.Internal.Raw
+    Database.Aerospike.Key
     Database.Aerospike.Operations
+    Database.Aerospike.TypesBridge
+    Database.Aerospike.Value
 
   other-modules:      Paths_haerospike
   hs-source-dirs:     src

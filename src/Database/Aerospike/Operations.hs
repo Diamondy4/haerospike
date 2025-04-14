@@ -17,6 +17,9 @@ import Data.Vector.Storable qualified as V
 import Data.Vector.Storable.Mutable qualified as VM
 import Database.Aerospike.Internal
 import Database.Aerospike.Internal.Raw
+import Database.Aerospike.Key
+import Database.Aerospike.TypesBridge
+import Database.Aerospike.Value
 import Foreign
 import Foreign.C
 import GHC.IO.Handle.Text (memcpy)
@@ -125,14 +128,29 @@ getBinBytesToStringUpdateTTL as ns set key bin (fromIntegral -> ttlSec) =
                     AerospikeErrRecordNotFound -> pure $ Right Nothing
                     _ -> Left <$> peek errTmp
 
+byteStringFromParts :: Ptr CString -> Ptr CInt -> IO BS.ByteString
+byteStringFromParts strPtr lenPtr = do
+    str <- peek strPtr
+    len <- peek lenPtr
+    BS.packCStringLen (str, fromIntegral len)
+
+mkAsBatchRecords :: Int -> IO AsBatchRecords
+mkAsBatchRecords keys = do
+    let ckeys = CInt $ toEnum keys
+    records <- [C.block| as_batch_records* { return as_batch_records_create($(int ckeys)); }|]
+    finalizer <- [C.exp|void (*as_batch_records_destroy)(as_batch_records*) { &as_batch_records_destroy }|]
+    AsBatchRecords <$> newForeignPtr finalizer records
+
+-- TODO: how does actually $bs-cstr works? Should it be copied again to avoid GC
+-- free it early?
 -- namespace -> set -> [key] -> [[(bin_name, bin_value)]]
-getBatchedKeysAllBins ::
+getBatchedKeysAllBinsValues ::
     Aerospike ->
     ByteString ->
     ByteString ->
-    [ByteString] ->
-    IO (Either AerospikeError [[(ByteString, ByteString)]])
-getBatchedKeysAllBins as ns set keys = do
+    [Key] ->
+    IO (Either AerospikeError [[(ByteString, Maybe Value)]])
+getBatchedKeysAllBinsValues as ns set keys = do
     let keysLen = length keys
     let ckeysLen = CInt $ toEnum keysLen
     alloca @AerospikeError $ \errTmp -> do
@@ -141,11 +159,15 @@ getBatchedKeysAllBins as ns set keys = do
         print "init as batch record"
 
         forM_ keys $ \key -> do
-            [C.block| void {
-            as_batch_read_record* record = as_batch_read_reserve($fptr-ptr:(as_batch_records* records));
-            as_key_init_raw(&record->key, $bs-cstr:ns, $bs-cstr:set, $bs-ptr:key, $bs-len:key);
-            record->read_all_bins = true;
-            }|]
+            asKeyPtr <-
+                [C.block| as_key* {
+                as_batch_read_record* record = as_batch_read_reserve($fptr-ptr:(as_batch_records* records));
+                record->read_all_bins = true;
+                return &record->key;
+                }|]
+
+            asKey <- AsKey <$> newForeignPtr_ asKeyPtr
+            initKey asKey ns set key
 
         print "init keys"
 
@@ -164,54 +186,80 @@ getBatchedKeysAllBins as ns set keys = do
 
         case status of
             AerospikeOk -> do
-                alloca @CString $ \binValue ->
-                    alloca @CInt $ \binValueLen ->
-                        alloca @CString $ \binName ->
-                            alloca @CInt $ \binNameLen -> do
-                                -- TODO: check records.list.size instead of rely on key_len?
-                                -- TODO: check status of each key request
-                                res <- forM [0 .. ckeysLen - 1] $ \i -> do
-                                    binsCount <-
-                                        [C.block| int {
-                                        as_vector* list = &$fptr-ptr:(as_batch_records* records)->list;
-                                        as_batch_read_record* r = as_vector_get(list, $(int i));
-                                        printf("status = %d, n_bin_names = %d\n", r->result, r->n_bin_names);
-                                        return r->record.bins.size;   
-                                    }|]
+                alloca @CString $ \binName ->
+                    alloca @CInt $ \binNameLen -> do
+                        -- TODO: check records.list.size instead of rely on key_len?
+                        -- TODO: check status of each key request
+                        res <- forM [0 .. ckeysLen - 1] $ \i -> do
+                            binsCount <-
+                                [C.block| int {
+                                as_vector* list = &$fptr-ptr:(as_batch_records* records)->list;
+                                as_batch_read_record* r = as_vector_get(list, $(int i));
+                                printf("status = %d, n_bin_names = %d\n", r->result, r->n_bin_names);
+                                return r->record.bins.size;   
+                            }|]
 
-                                    print binsCount
+                            print binsCount
 
-                                    forM [0 .. binsCount - 1] $ \binIx -> do
-                                        [C.block| void {
-                                            as_vector* list = &$fptr-ptr:(as_batch_records* records)->list;
-                                            as_batch_read_record* r = as_vector_get(list, $(int i));
-                                            as_bin* bin = r->record.bins.entries + $(int binIx);
-                                            
-                                            char* bin_name = as_bin_get_name(bin);
-                                            *$(char** binName) = bin_name;
-                                            *$(int* binNameLen) = strlen(bin_name);
+                            forM [0 .. binsCount - 1] $ \binIx -> do
+                                val <-
+                                    [C.block| as_val* {
+                                    as_vector* list = &$fptr-ptr:(as_batch_records* records)->list;
+                                    as_batch_read_record* r = as_vector_get(list, $(int i));
+                                    as_bin* bin = r->record.bins.entries + $(int binIx);
+                                    
+                                    char* bin_name = as_bin_get_name(bin);
+                                    *$(char** binName) = bin_name;
+                                    *$(int* binNameLen) = strlen(bin_name);
 
-                                            as_string* value = as_record_get_string(&r->record, bin_name);
-                                            *$(char** binValue) = as_string_get(value);
-                                            *$(int* binValueLen) = as_string_len(value);
-                                        }|]
+                                    return (as_val*)as_record_get(&r->record, bin_name);
+                                }|]
 
-                                        bsBinName <- byteStringFromParts binName binNameLen
-                                        bsBinValue <- byteStringFromParts binValue binValueLen
-                                        pure (bsBinName, bsBinValue)
+                                bsBinName <- byteStringFromParts binName binNameLen
+                                binVal <- AsVal <$> newForeignPtr_ val
+                                binValue <- parseBinValue binVal
+                                pure (bsBinName, binValue)
 
-                                return . Right $ res
+                        return . Right $ res
             _ -> Left <$> peek errTmp
 
-byteStringFromParts :: Ptr CString -> Ptr CInt -> IO BS.ByteString
-byteStringFromParts strPtr lenPtr = do
-    str <- peek strPtr
-    len <- peek lenPtr
-    BS.packCStringLen (str, fromIntegral len)
+setKey ::
+    Aerospike ->
+    ByteString ->
+    ByteString ->
+    Key ->
+    [(ByteString, Value)] ->
+    IO (Either AerospikeError ())
+setKey as ns set key bins = do
+    let binsLen = CInt $ toEnum $ length bins
+    asRecordPtr <- [C.block| as_record* { return as_record_new($(int binsLen)); }|]
+    finalizer <- [C.exp|void (*as_record_destroy)(as_record*) { &as_record_destroy }|]
+    asRecord <- AsRecord <$> newForeignPtr finalizer asRecordPtr
 
-mkAsBatchRecords :: Int -> IO AsBatchRecords
-mkAsBatchRecords keys = do
-    let ckeys = CInt $ toEnum keys
-    records <- [C.block| as_batch_records* { return as_batch_records_create($(int ckeys)); }|]
-    finalizer <- [C.exp|void (*as_batch_records_destroy)(as_batch_records*) { &as_batch_records_destroy }|]
-    AsBatchRecords <$> newForeignPtr finalizer records
+    forM_ bins $ \(binName, binValue) -> do
+        val <- createVal binValue
+        [C.block| void {
+            as_record_set($fptr-ptr:(as_record* asRecord), $bs-cstr:binName, (as_bin_value*)$fptr-ptr:(as_val* val));
+        }|]
+
+    -- FIXME: should definitely have function that create whole key
+    asKeyPtr <- [C.block| as_key* { return (as_key*)malloc(sizeof(as_key)); }|]
+    asKey <- AsKey <$> newForeignPtr_ asKeyPtr
+    initKey asKey ns set key
+
+    alloca @AerospikeError $ \errTmp -> do
+        status <-
+            toEnum @AerospikeStatus . fromIntegral
+                <$> [C.block| int {
+                return aerospike_key_put(
+                    $fptr-ptr:(aerospike* as),
+                    $(as_error* errTmp),
+                    NULL,
+                    $fptr-ptr:(as_key* asKey),
+                    $fptr-ptr:(as_record* asRecord)
+                );
+            }|]
+
+        case status of
+            AerospikeOk -> pure $ Right ()
+            _ -> Left <$> peek errTmp

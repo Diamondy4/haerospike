@@ -8,7 +8,9 @@ import Data.ByteString qualified as BS
 import Data.Text (Text)
 import Database.Aerospike
 import Database.Aerospike.Internal.Raw
+import Database.Aerospike.Key
 import Database.Aerospike.Operations
+import Database.Aerospike.Value
 
 main :: IO ()
 main = do
@@ -41,10 +43,13 @@ main = do
     val <- setBinBytesToString as ns set key binB binBValue 120
     print val
 
-    vals <- getBatchedKeysAllBins as ns set [key]
+    vals <- getBatchedKeysAllBinsValues as ns set [KBytes key, KString "key2", KString "key3"]
     print vals
 
-    val <- getBinBytesToStringUpdateTTL as ns set key binName 120
-    print val
+    res <- setKey as ns set (KBytes key) [(binA, VString "binAValueModified"), (binB, VString "binBValueModified")]
+    print res
+
+    vals <- getBatchedKeysAllBinsValues as ns set [KBytes key]
+    print vals
 
     print "done"
