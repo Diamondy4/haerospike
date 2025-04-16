@@ -21,6 +21,7 @@ import Database.Aerospike.Internal
 import Database.Aerospike.Internal.Raw
 import Database.Aerospike.Key
 import Database.Aerospike.Operator
+import Database.Aerospike.Record
 import Database.Aerospike.TypesBridge
 import Database.Aerospike.Value
 import Foreign
@@ -132,12 +133,6 @@ getBinBytesToStringUpdateTTL as ns set key bin (fromIntegral -> ttlSec) =
                     AerospikeErrRecordNotFound -> pure $ Right Nothing
                     _ -> Left <$> peek errTmp
 
-byteStringFromParts :: Ptr CString -> Ptr CInt -> IO BS.ByteString
-byteStringFromParts strPtr lenPtr = do
-    str <- peek strPtr
-    len <- peek lenPtr
-    BS.packCStringLen (str, fromIntegral len)
-
 mkAsBatchRecords :: Int -> IO AsBatchRecords
 mkAsBatchRecords keys = do
     let ckeys = CInt $ toEnum keys
@@ -145,13 +140,10 @@ mkAsBatchRecords keys = do
     finalizer <- [C.exp|void (*as_batch_records_destroy)(as_batch_records*) { &as_batch_records_destroy }|]
     AsBatchRecords <$> newForeignPtr finalizer records
 
--- TODO: how does actually $bs-cstr works? Should it be copied again to avoid GC
--- free it early?
--- namespace -> set -> [key] -> [[(bin_name, bin_value)]]
 getBatchedKeysAllBinsValues ::
     Aerospike ->
     [Key] ->
-    IO (Either AerospikeError [Maybe [(ByteString, Maybe Value)]])
+    IO (Either AerospikeError [Maybe Record])
 getBatchedKeysAllBinsValues as keys = evalContT $ do
     let keysLen = length keys
     let ckeysLen = CInt $ toEnum keysLen
@@ -187,12 +179,14 @@ getBatchedKeysAllBinsValues as keys = evalContT $ do
         AerospikeOk -> do
             binName <- ContT $ alloca @CString
             binNameLen <- ContT $ alloca @CInt
+            let AsBatchRecords fRecords = records
+            recordsPtr <- ContT $ withForeignPtr fRecords
             -- TODO: check records.list.size instead of rely on key_len?
             res <- forM [0 .. ckeysLen - 1] $ \i -> lift $ do
                 status <-
                     statusFromCSide
                         <$> [C.block| int {
-                    as_vector* list = &$fptr-ptr:(as_batch_records* records)->list;
+                    as_vector* list = &$(as_batch_records* recordsPtr)->list;
                     as_batch_read_record* r = as_vector_get(list, $(int i));
                     return r->result;         
                     }|]
@@ -200,31 +194,14 @@ getBatchedKeysAllBinsValues as keys = evalContT $ do
                 case status of
                     AerospikeOk ->
                         Just <$> do
-                            binsCount <-
-                                [C.block| int {
-                                as_vector* list = &$fptr-ptr:(as_batch_records* records)->list;
-                                as_batch_read_record* r = as_vector_get(list, $(int i));
-                                return r->record.bins.size;   
+                            recordPtr <-
+                                [C.block| as_record* {
+                                    as_vector* list = &$(as_batch_records* recordsPtr)->list;
+                                    as_batch_read_record* r = as_vector_get(list, $(int i));
+                                    return &r->record;                   
                                 }|]
 
-                            forM [0 .. binsCount - 1] $ \binIx -> do
-                                val <-
-                                    [C.block| as_val* {
-                                    as_vector* list = &$fptr-ptr:(as_batch_records* records)->list;
-                                    as_batch_read_record* r = as_vector_get(list, $(int i));
-                                    as_bin* bin = r->record.bins.entries + $(int binIx);
-                                    
-                                    char* bin_name = as_bin_get_name(bin);
-                                    *$(char** binName) = bin_name;
-                                    *$(int* binNameLen) = strlen(bin_name);
-
-                                    return (as_val*)as_record_get(&r->record, bin_name);
-                                    }|]
-
-                                bsBinName <- byteStringFromParts binName binNameLen
-                                binVal <- AsVal <$> newForeignPtr_ val
-                                binValue <- parseBinValue binVal
-                                pure (bsBinName, binValue)
+                            parseRecord recordPtr
                     _ -> pure Nothing
             return . Right $ res
         _ -> do
@@ -275,12 +252,11 @@ setKey as key bins = evalContT $ do
             err <- lift $ peek errTmp
             pure $ Left err
 
--- TODO: get read fields
 keyOperate ::
     Aerospike ->
     Key ->
     [Operator] ->
-    IO (Either AerospikeError ())
+    IO (Either AerospikeError Record)
 keyOperate as key ops = evalContT $ do
     let opsLen = CInt $ toEnum $ length ops
     asKey <- newKey key
@@ -289,8 +265,15 @@ keyOperate as key ops = evalContT $ do
     asOperations <- lift $ AsOperations <$> newForeignPtr finalizer asOperationsPtr
 
     forM_ ops $ \case
-        Read op -> do
-            bin <- ContT $ BS.useAsCString op.binName
+        Read ReadAll -> lift [C.block| void { as_operations_add_read_all($fptr-ptr:(as_operations* asOperations)); }|]
+        Read (ReadSome binNames) -> forM_ binNames $ \binName -> do
+            bin <- ContT $ BS.useAsCString binName
+            lift
+                [C.block| void {
+                as_operations_add_read($fptr-ptr:(as_operations* asOperations), $(char* bin));
+            }|]
+        Read (ReadOne binName) -> do
+            bin <- ContT $ BS.useAsCString binName
             lift
                 [C.block| void {
                 as_operations_add_read($fptr-ptr:(as_operations* asOperations), $(char* bin));
@@ -311,7 +294,7 @@ keyOperate as key ops = evalContT $ do
                 [C.block| void {
                 as_operations_add_touch($fptr-ptr:(as_operations* asOperations));
             }|]
-        Modify -> error "todo"
+        Modify _ _ -> error "todo"
         SetTTL ttl -> lift $ do
             let ttlVal = case ttl of
                     DefaultTTL -> [C.pure| int { AS_RECORD_DEFAULT_TTL } |]
@@ -330,22 +313,26 @@ keyOperate as key ops = evalContT $ do
             }|]
 
     errTmp <- ContT $ alloca @AerospikeError
-    status <-
-        lift $
-            statusFromCSide
-                <$> [C.block| int {
-            as_record* r = NULL;
+    recordPtr <-
+        lift
+            [C.block| as_record* {
+                as_record* r = NULL;
 
-            return aerospike_key_operate(
-                $fptr-ptr:(aerospike* as),
-                $(as_error* errTmp),
-                NULL,
-                $fptr-ptr:(as_key* asKey),
-                $fptr-ptr:(as_operations* asOperations),
-                &r
-            );
-        }|]
+                as_status status = aerospike_key_operate(
+                    $fptr-ptr:(aerospike* as),
+                    $(as_error* errTmp),
+                    NULL,
+                    $fptr-ptr:(as_key* asKey),
+                    $fptr-ptr:(as_operations* asOperations),
+                    &r
+                );
 
-    case status of
-        AerospikeOk -> pure $ Right ()
-        _ -> lift $ Left <$> peek errTmp
+                return status == AEROSPIKE_OK ? r : NULL;
+            }|]
+
+    if recordPtr /= nullPtr
+        then lift $ do
+            record <- parseRecord recordPtr
+            [C.block| void { as_record_destroy($(as_record* recordPtr)); }|]
+            pure $ Right record
+        else lift $ Left <$> peek errTmp

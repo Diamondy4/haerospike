@@ -55,6 +55,7 @@ library
     Database.Aerospike.Key
     Database.Aerospike.Operations
     Database.Aerospike.Operator
+    Database.Aerospike.Record
     Database.Aerospike.TypesBridge
     Database.Aerospike.Value
 

@@ -13,6 +13,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.IORef (modifyIORef, newIORef, readIORef, writeIORef)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (mapMaybe)
 import Data.Proxy
 import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
@@ -22,6 +23,7 @@ import Data.Vector.Storable.Mutable qualified as VM
 import Database.Aerospike.Internal
 import Database.Aerospike.Internal.Raw
 import Database.Aerospike.Key
+import Database.Aerospike.Record
 import Database.Aerospike.Value
 import Foreign
 import Foreign.C
@@ -74,6 +76,8 @@ newKey key = do
     pure asKey
 
 -- TODO: probably should signal error if parsing of inner value in collection failed
+-- TODO: should it return Maybe? hard to imagine cases where it can be needed
+-- (aside from bugs in aerospike-c-client itself )
 parseBinValue :: AsVal -> IO (Maybe Value)
 parseBinValue ptrVal = do
     res <- newIORef @(Maybe Value) Nothing
@@ -214,3 +218,43 @@ createVal = \case
         (bytesPtr, bytesLen) <- ContT $ BS.useAsCStringLen bytes
         let cBytesLen = CInt $ toEnum bytesLen
         lift [C.block| as_val* { return (as_val*)as_bytes_new_wrap($(char* bytesPtr), $(int cBytesLen), false); } |]
+
+byteStringFromParts :: Ptr CString -> Ptr CInt -> IO BS.ByteString
+byteStringFromParts strPtr lenPtr = do
+    str <- peek strPtr
+    len <- peek lenPtr
+    BS.packCStringLen (str, fromIntegral len)
+
+parseRecord :: Ptr AsRecord -> IO Record
+parseRecord recordPtr = do
+    binsCount <-
+        [C.exp| int { $(as_record* recordPtr)->bins.size }|]
+
+    bins <-
+        alloca @CString $ \binName ->
+            alloca @CInt $ \binNameLen -> do
+                forM [0 .. binsCount - 1] $ \binIx -> do
+                    val <-
+                        [C.block| as_val* {
+                    as_record* r = $(as_record* recordPtr); 
+                    as_bin* bin = r->bins.entries + $(int binIx);
+                    char* bin_name = as_bin_get_name(bin);
+                    *$(char** binName) = bin_name;
+                    *$(int* binNameLen) = strlen(bin_name);
+                    return (as_val*)as_record_get(r, bin_name);
+                    }|]
+
+                    bsBinName <- byteStringFromParts binName binNameLen
+                    binVal <- AsVal <$> newForeignPtr_ val
+                    binValue <- parseBinValue binVal
+                    pure (bsBinName, binValue)
+
+    gen <- [C.exp| int { $(as_record* recordPtr)->gen }|]
+    ttl <- [C.exp| int { $(as_record* recordPtr)->ttl }|]
+
+    pure $
+        MkRecord
+            { gen = fromEnum gen
+            , ttl = fromEnum ttl
+            , bins = mapMaybe (\(k, v) -> (,) <$> Just k <*> v) bins
+            }
