@@ -20,6 +20,7 @@ asTypesTable :: Map C.TypeSpecifier TH.TypeQ
 asTypesTable =
     [ (C.TypeName "aerospike", [t|Aerospike|])
     , (C.TypeName "as_batch_records", [t|AsBatchRecords|])
+    , (C.TypeName "as_operations", [t|AsOperations|])
     , (C.TypeName "as_record", [t|AsRecord|])
     , (C.TypeName "as_bin_value", [t|AsBinValue|])
     , (C.TypeName "as_val", [t|AsVal|])

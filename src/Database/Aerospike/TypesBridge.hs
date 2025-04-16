@@ -7,6 +7,8 @@
 module Database.Aerospike.TypesBridge where
 
 import Control.Monad (forM, forM_)
+import Control.Monad.Cont
+import Control.Monad.Trans
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.IORef (modifyIORef, newIORef, readIORef, writeIORef)
@@ -36,26 +38,40 @@ C.include "<aerospike/as_orderedmap.h>"
 C.include "<aerospike/as_arraylist.h>"
 C.include "<string.h>"
 
-initKey :: AsKey -> Key -> IO ()
+-- FIXME: should $bs-cstr be copied?
+initKey :: AsKey -> Key -> ContT r IO ()
 initKey ptr key = do
-    let ns = key.namespace
-    let set = key.set
+    cNamespace <- ContT $ BS.useAsCString key.namespace
+    cSet <- ContT $ BS.useAsCString key.set
 
     case key.pKey of
-        KInteger k -> do
+        KInteger k -> lift $ do
             let cK = CInt $ toEnum k
+
             [C.block| void {
-                as_key_init_int64($fptr-ptr:(as_key* ptr), $bs-cstr:ns, $bs-cstr:set, $(int cK));
+                as_key_init_int64($fptr-ptr:(as_key* ptr), $(char* cNamespace), $(char* cSet), $(int cK));
             }|]
         KString k -> do
-            let bsK = encodeUtf8 k
-            [C.block| void {
-                as_key_init($fptr-ptr:(as_key* ptr), $bs-cstr:ns, $bs-cstr:set, $bs-cstr:bsK);
-            }|]
-        KBytes k ->
-            [C.block| void {
-                as_key_init_raw($fptr-ptr:(as_key* ptr), $bs-cstr:ns, $bs-cstr:set, $bs-ptr:k, $bs-len:k);
-            }|]
+            bsK <- ContT $ BS.useAsCString $ encodeUtf8 k
+            lift
+                [C.block| void {
+                    as_key_init($fptr-ptr:(as_key* ptr), $(char* cNamespace), $(char* cSet), $(char* bsK));
+                }|]
+        KBytes k -> do
+            (keyPtr, keyLen) <- ContT $ BS.useAsCStringLen k
+            let cKeyLen = CInt $ toEnum keyLen
+            lift
+                [C.block| void {
+                    as_key_init_raw($fptr-ptr:(as_key* ptr), $(char* cNamespace), $(char* cSet), $(char* keyPtr), $(int cKeyLen));
+                }|]
+
+newKey :: Key -> ContT r IO AsKey
+newKey key = do
+    asKeyPtr <- lift [C.block| as_key* { return (as_key*)malloc(sizeof(as_key)); }|]
+    finalizer <- lift [C.exp|void (*free)(as_key*) { (void (*)(as_key*))&free }|]
+    asKey <- lift $ AsKey <$> newForeignPtr finalizer asKeyPtr
+    initKey asKey key
+    pure asKey
 
 -- TODO: probably should signal error if parsing of inner value in collection failed
 parseBinValue :: AsVal -> IO (Maybe Value)
@@ -149,53 +165,52 @@ parseBinValue ptrVal = do
     readIORef res
 
 -- TODO: should allocate objects at C side to not think about lifetimes between FFI boundaries?
-createVal :: Value -> IO AsVal
+-- FIXME: actually broken, because want to use in code like this:
+-- ```
+-- val <- createVal hVal
+-- insertInRecord rec val
+-- ```
+-- but it actually forgetting about pointers relations at this moment and can destroy
+-- `val` because it's "unused"
+-- TODO: Is it correct to leave destroy operations to outer structure?
+-- i.e. it's seems like as_list call destroy operation at each element and as_record
+-- destroys its associated resources (probably including keys and bin values)
+createVal :: Value -> ContT r IO (Ptr AsVal)
 createVal = \case
-    VNil -> do
-        asVal <- [C.exp| as_val* { (as_val*)&as_nil }|]
-        AsVal <$> newForeignPtr_ asVal
-    VBoolean bool -> do
+    VNil -> lift [C.exp| as_val* { (as_val*)&as_nil }|]
+    VBoolean bool -> lift $ do
         let cBool = if bool then CBool 1 else CBool 0
-        asVal <- [C.block| as_val* { return (as_val*)as_boolean_new($(bool cBool)); }|]
-        finalizer <- [C.exp|void (*as_boolean_destroy)(as_val*) { (void (*)(as_val*))&as_boolean_destroy }|]
-        AsVal <$> newForeignPtr finalizer asVal
-    VInteger v -> do
-        asVal <- [C.block| as_val* { return (as_val*)as_integer_new($(int64_t v)); }|]
-        finalizer <- [C.exp|void (*as_integer_destroy)(as_val*) { (void (*)(as_val*))&as_integer_destroy }|]
-        AsVal <$> newForeignPtr finalizer asVal
+        [C.block| as_val* { return (as_val*)as_boolean_new($(bool cBool)); }|]
+    VInteger v -> lift [C.block| as_val* { return (as_val*)as_integer_new($(int64_t v)); }|]
     VString text -> do
-        let bs = encodeUtf8 text
-        asVal <- [C.block| as_val* { return (as_val*)as_string_new($bs-cstr:bs, false); } |]
-        finalizer <- [C.exp|void (*as_string_destroy)(as_val*) { (void (*)(as_val*))&as_string_destroy }|]
-        AsVal <$> newForeignPtr finalizer asVal
+        bs <- ContT $ BS.useAsCString $ encodeUtf8 text
+        lift [C.block| as_val* { return (as_val*)as_string_new($(char* bs), false); } |]
     VList vec -> do
         let len = CInt $ toEnum $ V.length vec
-        asList <- [C.block| as_val* { return (as_val*)as_arraylist_new($(int len), 1); }|]
-        finalizer <- [C.exp|void (*as_list_destroy)(as_val*) { (void (*)(as_val*))&as_list_destroy }|]
-        asList <- AsVal <$> newForeignPtr finalizer asList
+        asList <- lift [C.block| as_val* { return (as_val*)as_arraylist_new($(int len), 1); }|]
 
         V.forM_ vec $ \x -> do
             val <- createVal x
-            [C.block| void {
-                as_list_append((as_list*)$fptr-ptr:(as_val* asList), $fptr-ptr:(as_val* val));
-            }|]
+            lift
+                [C.block| void {
+                    as_list_append((as_list*)$(as_val* asList), $(as_val* val));
+                }|]
 
         pure asList
     VMap map -> do
         let len = CInt $ toEnum $ Map.size map
-        asMap <- [C.block| as_val* { return (as_val*)as_orderedmap_new($(int len)); }|]
-        finalizer <- [C.exp|void (*as_map_destroy)(as_val*) { (void (*)(as_val*))&as_map_destroy }|]
-        asMap <- AsVal <$> newForeignPtr finalizer asMap
+        asMap <- lift [C.block| as_val* { return (as_val*)as_orderedmap_new($(int len)); }|]
 
         forM_ (Map.assocs map) $ \(k, v) -> do
             cK <- createVal k
             cV <- createVal v
-            [C.block| void {
-                as_map_set((as_map*)$fptr-ptr:(as_val* asMap), $fptr-ptr:(as_val* cK), $fptr-ptr:(as_val* cV));
-            }|]
+            lift
+                [C.block| void {
+                    as_map_set((as_map*)$(as_val* asMap), $(as_val* cK), $(as_val* cV));
+                }|]
 
         pure asMap
     VBytes bytes -> do
-        asVal <- [C.block| as_val* { return (as_val*)as_bytes_new_wrap($bs-ptr:bytes, $bs-len:bytes, false); } |]
-        finalizer <- [C.exp|void (*as_bytes_destroy)(as_val*) { (void (*)(as_val*))&as_bytes_destroy }|]
-        AsVal <$> newForeignPtr finalizer asVal
+        (bytesPtr, bytesLen) <- ContT $ BS.useAsCStringLen bytes
+        let cBytesLen = CInt $ toEnum bytesLen
+        lift [C.block| as_val* { return (as_val*)as_bytes_new_wrap($(char* bytesPtr), $(int cBytesLen), false); } |]

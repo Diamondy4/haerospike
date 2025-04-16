@@ -39,6 +39,7 @@ common extensions
   default-extensions:
     DeriveAnyClass
     DerivingStrategies
+    DuplicateRecordFields
     ImportQualifiedPost
     LambdaCase
     OverloadedRecordDot
@@ -53,6 +54,7 @@ library
     Database.Aerospike.Internal.Raw
     Database.Aerospike.Key
     Database.Aerospike.Operations
+    Database.Aerospike.Operator
     Database.Aerospike.TypesBridge
     Database.Aerospike.Value
 
@@ -64,6 +66,7 @@ library
     , bytestring
     , containers
     , inline-c
+    , mtl
     , template-haskell
     , text
     , vector

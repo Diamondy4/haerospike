@@ -39,6 +39,8 @@ import Control.Exception (Exception)
 
 {# pointer *as_key as AsKey foreign newtype #}
 
+{# pointer *as_operations as AsOperations foreign newtype #}
+
 data AerospikeError = AerospikeError
   { code :: AerospikeStatus
   , file :: ByteString
