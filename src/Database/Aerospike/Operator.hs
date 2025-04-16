@@ -4,6 +4,7 @@
 module Database.Aerospike.Operator where
 
 import Data.ByteString qualified as BS
+import Data.Word (Word32)
 import Database.Aerospike.Value (Value)
 
 data ReadOp
@@ -29,7 +30,7 @@ data TTL
     | NoExpireTTL
     | NoChangeTTL
     | ClientDefaultTTL
-    | ManualSecs Int
+    | ManualSecs Word32
     deriving stock (Show, Eq)
 
 data Operator

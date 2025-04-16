@@ -135,8 +135,8 @@ getBinBytesToStringUpdateTTL as ns set key bin (fromIntegral -> ttlSec) =
 
 mkAsBatchRecords :: Int -> IO AsBatchRecords
 mkAsBatchRecords keys = do
-    let ckeys = CInt $ toEnum keys
-    records <- [C.block| as_batch_records* { return as_batch_records_create($(int ckeys)); }|]
+    let ckeys = toEnum @Word32 keys
+    records <- [C.block| as_batch_records* { return as_batch_records_create($(uint32_t ckeys)); }|]
     finalizer <- [C.exp|void (*as_batch_records_destroy)(as_batch_records*) { &as_batch_records_destroy }|]
     AsBatchRecords <$> newForeignPtr finalizer records
 
@@ -146,7 +146,7 @@ getBatchedKeysAllBinsValues ::
     IO (Either AerospikeError [Maybe Record])
 getBatchedKeysAllBinsValues as keys = evalContT $ do
     let keysLen = length keys
-    let ckeysLen = CInt $ toEnum keysLen
+    let ckeysLen = toEnum @Word32 keysLen
 
     errTmp <- ContT $ alloca @AerospikeError
     records <- lift $ mkAsBatchRecords keysLen
@@ -187,7 +187,7 @@ getBatchedKeysAllBinsValues as keys = evalContT $ do
                     statusFromCSide
                         <$> [C.block| int {
                     as_vector* list = &$(as_batch_records* recordsPtr)->list;
-                    as_batch_read_record* r = as_vector_get(list, $(int i));
+                    as_batch_read_record* r = as_vector_get(list, $(uint32_t i));
                     return r->result;         
                     }|]
 
@@ -197,7 +197,7 @@ getBatchedKeysAllBinsValues as keys = evalContT $ do
                             recordPtr <-
                                 [C.block| as_record* {
                                     as_vector* list = &$(as_batch_records* recordsPtr)->list;
-                                    as_batch_read_record* r = as_vector_get(list, $(int i));
+                                    as_batch_read_record* r = as_vector_get(list, $(uint32_t i));
                                     return &r->record;                   
                                 }|]
 
@@ -217,8 +217,8 @@ setKey ::
     [(ByteString, Value)] ->
     IO (Either AerospikeError ())
 setKey as key bins = evalContT $ do
-    let binsLen = CInt $ toEnum $ length bins
-    asRecordPtr <- lift [C.block| as_record* { return as_record_new($(int binsLen)); }|]
+    let binsLen = toEnum @Word32 $ length bins
+    asRecordPtr <- lift [C.block| as_record* { return as_record_new($(uint32_t binsLen)); }|]
     finalizer <- lift [C.exp|void (*as_record_destroy)(as_record*) { &as_record_destroy }|]
     asRecord <- lift $ AsRecord <$> newForeignPtr finalizer asRecordPtr
 
@@ -258,9 +258,9 @@ keyOperate ::
     [Operator] ->
     IO (Either AerospikeError Record)
 keyOperate as key ops = evalContT $ do
-    let opsLen = CInt $ toEnum $ length ops
+    let opsLen = toEnum @Word32 $ length ops
     asKey <- newKey key
-    asOperationsPtr <- lift [C.block| as_operations* { return as_operations_new($(int opsLen)); }|]
+    asOperationsPtr <- lift [C.block| as_operations* { return as_operations_new($(uint32_t opsLen)); }|]
     finalizer <- lift [C.exp|void (*as_operations_destroy)(as_operations*) { &as_operations_destroy }|]
     asOperations <- lift $ AsOperations <$> newForeignPtr finalizer asOperationsPtr
 
@@ -297,14 +297,14 @@ keyOperate as key ops = evalContT $ do
         Modify _ _ -> error "todo"
         SetTTL ttl -> lift $ do
             let ttlVal = case ttl of
-                    DefaultTTL -> [C.pure| int { AS_RECORD_DEFAULT_TTL } |]
-                    NoExpireTTL -> [C.pure| int { AS_RECORD_NO_EXPIRE_TTL } |]
-                    NoChangeTTL -> [C.pure| int {AS_RECORD_NO_CHANGE_TTL }|]
-                    ClientDefaultTTL -> [C.pure| int {AS_RECORD_CLIENT_DEFAULT_TTL }|]
-                    ManualSecs secs -> CInt $ fromIntegral secs
+                    DefaultTTL -> [C.pure| uint32_t { AS_RECORD_DEFAULT_TTL } |]
+                    NoExpireTTL -> [C.pure| uint32_t { AS_RECORD_NO_EXPIRE_TTL } |]
+                    NoChangeTTL -> [C.pure| uint32_t { AS_RECORD_NO_CHANGE_TTL }|]
+                    ClientDefaultTTL -> [C.pure| uint32_t { AS_RECORD_CLIENT_DEFAULT_TTL }|]
+                    ManualSecs secs -> secs
 
             [C.block| void {
-                $fptr-ptr:(as_operations* asOperations)->ttl = $(int ttlVal);
+                $fptr-ptr:(as_operations* asOperations)->ttl = $(uint32_t ttlVal);
             }|]
         Delete ->
             lift

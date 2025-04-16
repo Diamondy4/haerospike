@@ -3,10 +3,11 @@
 module Database.Aerospike.Key where
 
 import Data.ByteString (ByteString)
+import Data.Int (Int64)
 import Data.Text (Text)
 
 data PKey
-    = KInteger Int
+    = KInteger Int64
     | KString Text
     | KBytes ByteString
     deriving (Show)

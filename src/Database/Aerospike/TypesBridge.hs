@@ -47,11 +47,15 @@ initKey ptr key = do
     cSet <- ContT $ BS.useAsCString key.set
 
     case key.pKey of
-        KInteger k -> lift $ do
-            let cK = CInt $ toEnum k
-
-            [C.block| void {
-                as_key_init_int64($fptr-ptr:(as_key* ptr), $(char* cNamespace), $(char* cSet), $(int cK));
+        KInteger k ->
+            lift
+                [C.block| void {
+                    as_key_init_int64(
+                        $fptr-ptr:(as_key* ptr), 
+                        $(char* cNamespace), 
+                        $(char* cSet), 
+                        $(int64_t k)
+                    );
             }|]
         KString k -> do
             bsK <- ContT $ BS.useAsCString $ encodeUtf8 k
@@ -61,10 +65,15 @@ initKey ptr key = do
                 }|]
         KBytes k -> do
             (keyPtr, keyLen) <- ContT $ BS.useAsCStringLen k
-            let cKeyLen = CInt $ toEnum keyLen
+            let cKeyLen = toEnum @Word32 keyLen
             lift
                 [C.block| void {
-                    as_key_init_raw($fptr-ptr:(as_key* ptr), $(char* cNamespace), $(char* cSet), $(char* keyPtr), $(int cKeyLen));
+                    as_key_init_raw(
+                        $fptr-ptr:(as_key* ptr), 
+                        $(char* cNamespace), 
+                        $(char* cSet), 
+                        $(char* keyPtr), 
+                        $(uint32_t cKeyLen));
                 }|]
 
 newKey :: Key -> ContT r IO AsKey
@@ -190,8 +199,8 @@ createVal = \case
         bs <- ContT $ BS.useAsCString $ encodeUtf8 text
         lift [C.block| as_val* { return (as_val*)as_string_new($(char* bs), false); } |]
     VList vec -> do
-        let len = CInt $ toEnum $ V.length vec
-        asList <- lift [C.block| as_val* { return (as_val*)as_arraylist_new($(int len), 1); }|]
+        let len = toEnum @Word32 $ V.length vec
+        asList <- lift [C.block| as_val* { return (as_val*)as_arraylist_new($(uint32_t len), 1); }|]
 
         V.forM_ vec $ \x -> do
             val <- createVal x
@@ -202,8 +211,8 @@ createVal = \case
 
         pure asList
     VMap map -> do
-        let len = CInt $ toEnum $ Map.size map
-        asMap <- lift [C.block| as_val* { return (as_val*)as_orderedmap_new($(int len)); }|]
+        let len = toEnum @Word32 $ Map.size map
+        asMap <- lift [C.block| as_val* { return (as_val*)as_orderedmap_new($(uint32_t len)); }|]
 
         forM_ (Map.assocs map) $ \(k, v) -> do
             cK <- createVal k
@@ -216,8 +225,14 @@ createVal = \case
         pure asMap
     VBytes bytes -> do
         (bytesPtr, bytesLen) <- ContT $ BS.useAsCStringLen bytes
-        let cBytesLen = CInt $ toEnum bytesLen
-        lift [C.block| as_val* { return (as_val*)as_bytes_new_wrap($(char* bytesPtr), $(int cBytesLen), false); } |]
+        let cBytesLen = toEnum @Word32 bytesLen
+        lift
+            [C.block| as_val* { 
+            return (as_val*)as_bytes_new_wrap(
+                $(char* bytesPtr), 
+                $(uint32_t cBytesLen), 
+                false); 
+            }|]
 
 byteStringFromParts :: Ptr CString -> Ptr CInt -> IO BS.ByteString
 byteStringFromParts strPtr lenPtr = do
@@ -249,12 +264,12 @@ parseRecord recordPtr = do
                     binValue <- parseBinValue binVal
                     pure (bsBinName, binValue)
 
-    gen <- [C.exp| int { $(as_record* recordPtr)->gen }|]
-    ttl <- [C.exp| int { $(as_record* recordPtr)->ttl }|]
+    gen <- [C.exp| uint16_t { $(as_record* recordPtr)->gen }|]
+    ttl <- [C.exp| uint32_t { $(as_record* recordPtr)->ttl }|]
 
     pure $
         MkRecord
-            { gen = fromEnum gen
-            , ttl = fromEnum ttl
+            { gen = gen
+            , ttl = ttl
             , bins = mapMaybe (\(k, v) -> (,) <$> Just k <*> v) bins
             }
