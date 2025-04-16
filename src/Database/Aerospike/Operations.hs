@@ -289,19 +289,20 @@ keyOperate as key ops = evalContT $ do
     asOperations <- lift $ AsOperations <$> newForeignPtr finalizer asOperationsPtr
 
     forM_ ops $ \case
-        Read op -> lift $ do
-            let bin = op.binName
-            [C.block| void {
-                as_operations_add_read($fptr-ptr:(as_operations* asOperations), $bs-cstr:bin);
+        Read op -> do
+            bin <- ContT $ BS.useAsCString op.binName
+            lift
+                [C.block| void {
+                as_operations_add_read($fptr-ptr:(as_operations* asOperations), $(char* bin));
             }|]
         Write op -> do
-            let bin = op.binName
+            bin <- ContT $ BS.useAsCString op.binName
             asVal <- createVal op.value
             lift
                 [C.block| void {
                 as_operations_add_write(
                     $fptr-ptr:(as_operations* asOperations), 
-                    $bs-cstr:bin, 
+                    $(char* bin), 
                     (as_bin_value*)$(as_val* asVal)
                 );
             }|]
