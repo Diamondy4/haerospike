@@ -14,6 +14,7 @@ import Data.ByteString qualified as BS
 import Data.Map.Strict qualified as Map
 import Data.Proxy
 import Data.Text (Text, pack)
+import Data.Text.Encoding (encodeUtf8)
 import Data.Text.Foreign qualified as TF
 import Data.Vector.Storable qualified as V
 import Data.Vector.Storable.Mutable qualified as VM
@@ -35,6 +36,8 @@ C.include "<aerospike/aerospike_key.h>"
 C.include "<aerospike/aerospike_batch.h>"
 C.include "<aerospike/as_vector.h>"
 C.include "<aerospike/as_operations.h>"
+C.include "<aerospike/as_list_operations.h>"
+C.include "<aerospike/as_map_operations.h>"
 C.include "<aerospike/as_record.h>"
 
 setBinBytesToString ::
@@ -294,7 +297,87 @@ keyOperate as key ops = evalContT $ do
                 [C.block| void {
                 as_operations_add_touch($fptr-ptr:(as_operations* asOperations));
             }|]
-        Modify _ _ -> error "todo"
+        Modify binName op -> do
+            bin <- ContT $ BS.useAsCString binName
+
+            case op of
+                Incr delta -> do
+                    lift
+                        [C.block| void {
+                        as_operations_add_incr(
+                            $fptr-ptr:(as_operations* asOperations),
+                            $(char* bin), 
+                            $(int64_t delta)
+                        );
+                        }|]
+                RAppend bs -> do
+                    (bsVal, bsLen) <- ContT $ BS.useAsCStringLen bs
+                    let cbsLen = toEnum @Word32 bsLen
+                    lift
+                        [C.block| void {
+                            as_operations_add_append_raw(
+                                $fptr-ptr:(as_operations* asOperations),
+                                $(char* bin),
+                                (uint8_t*)$(char* bsVal),
+                                $(uint32_t cbsLen)
+                            );
+                        }|]
+                RPrepend bs -> do
+                    (bsVal, bsLen) <- ContT $ BS.useAsCStringLen bs
+                    let cbsLen = toEnum @Word32 bsLen
+                    lift
+                        [C.block| void {
+                            as_operations_add_prepend_raw(
+                                $fptr-ptr:(as_operations* asOperations),
+                                $(char* bin),
+                                (uint8_t*)$(char* bsVal),
+                                $(uint32_t cbsLen)
+                            );
+                        }|]
+                SAppend text -> do
+                    textPtr <- ContT $ BS.useAsCString $ encodeUtf8 text
+                    lift
+                        [C.block| void {
+                            as_operations_add_append_str(
+                                $fptr-ptr:(as_operations* asOperations),
+                                $(char* bin),
+                                $(char* textPtr)
+                            );
+                        }|]
+                SPrepend text -> do
+                    textPtr <- ContT $ BS.useAsCString $ encodeUtf8 text
+                    lift
+                        [C.block| void {
+                            as_operations_add_prepend_str(
+                                $fptr-ptr:(as_operations* asOperations),
+                                $(char* bin),
+                                $(char* textPtr)
+                            );
+                        }|]
+                LAppend values -> do
+                    valuesPtr <- createVal $ VList values
+                    lift
+                        [C.block| void {
+                            as_operations_list_append_items(
+                                $fptr-ptr:(as_operations* asOperations),
+                                $(char* bin),
+                                NULL,
+                                NULL,
+                                (as_list*)$(as_val* valuesPtr)
+                            );
+                        }|]
+                MPut values -> do
+                    valuesPtr <- createVal $ VMap values
+                    lift
+                        [C.block| void {
+                            as_operations_map_put_items(
+                                $fptr-ptr:(as_operations* asOperations),
+                                $(char* bin),
+                                NULL,
+                                NULL,
+                                (as_map*)$(as_val* valuesPtr)
+                            );
+                        }|]
         SetTTL ttl -> lift $ do
             let ttlVal = case ttl of
                     DefaultTTL -> [C.pure| uint32_t { AS_RECORD_DEFAULT_TTL } |]
