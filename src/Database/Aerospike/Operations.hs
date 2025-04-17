@@ -4,7 +4,14 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
-module Database.Aerospike.Operations where
+module Database.Aerospike.Operations (
+    setBinBytesToString,
+    getBinBytesToStringUpdateTTL,
+    keyBatchedGet,
+    keyPut,
+    keyOperate,
+)
+where
 
 import Control.Monad (forM, forM_)
 import Control.Monad.Cont
@@ -143,11 +150,11 @@ mkAsBatchRecords keys = do
     finalizer <- [C.exp|void (*as_batch_records_destroy)(as_batch_records*) { &as_batch_records_destroy }|]
     AsBatchRecords <$> newForeignPtr finalizer records
 
-getBatchedKeysAllBinsValues ::
+keyBatchedGet ::
     Aerospike ->
     [Key] ->
     IO (Either AerospikeError [Maybe Record])
-getBatchedKeysAllBinsValues as keys = evalContT $ do
+keyBatchedGet as keys = evalContT $ do
     let keysLen = length keys
     let ckeysLen = toEnum @Word32 keysLen
 
@@ -214,12 +221,12 @@ getBatchedKeysAllBinsValues as keys = evalContT $ do
 statusFromCSide :: CInt -> AerospikeStatus
 statusFromCSide = toEnum @AerospikeStatus . fromIntegral
 
-setKey ::
+keyPut ::
     Aerospike ->
     Key ->
     [(ByteString, Value)] ->
     IO (Either AerospikeError ())
-setKey as key bins = evalContT $ do
+keyPut as key bins = evalContT $ do
     let binsLen = toEnum @Word32 $ length bins
     asRecordPtr <- lift [C.block| as_record* { return as_record_new($(uint32_t binsLen)); }|]
     finalizer <- lift [C.exp|void (*as_record_destroy)(as_record*) { &as_record_destroy }|]
