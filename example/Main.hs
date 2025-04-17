@@ -62,7 +62,7 @@ batchTest as ns set = do
     res <- keyPut as key1 [(binA, VString "binAValueModified"), (binB, VString "binBValueModified")]
     print res
 
-    vals <- keyBatchedGet as [key1]
+    vals <- keyGet as key1
     print vals
 
 operateTest :: Aerospike -> ByteString -> ByteString -> IO ()

@@ -9,6 +9,7 @@ module Database.Aerospike.Operations (
     getBinBytesToStringUpdateTTL,
     keyBatchedGet,
     keyPut,
+    keyGet,
     keyOperate,
 )
 where
@@ -150,6 +151,34 @@ mkAsBatchRecords keys = do
     finalizer <- [C.exp|void (*as_batch_records_destroy)(as_batch_records*) { &as_batch_records_destroy }|]
     AsBatchRecords <$> newForeignPtr finalizer records
 
+keyGet :: Aerospike -> Key -> IO (Either AerospikeError Record)
+keyGet as key = evalContT $ do
+    asKey <- newKey key
+    errTmp <- ContT $ alloca @AerospikeError
+
+    recordPtr <-
+        lift
+            [C.block| as_record* {
+                as_record* r = NULL;
+
+                as_status status = aerospike_key_get(
+                    $fptr-ptr:(aerospike* as),
+                    $(as_error* errTmp),
+                    NULL,
+                    $fptr-ptr:(as_key* asKey),
+                    &r
+                );
+
+                return status == AEROSPIKE_OK ? r : NULL;
+            }|]
+
+    if recordPtr /= nullPtr
+        then lift $ do
+            record <- parseRecord recordPtr
+            [C.block| void { as_record_destroy($(as_record* recordPtr)); }|]
+            pure $ Right record
+        else lift $ Left <$> peek errTmp
+
 keyBatchedGet ::
     Aerospike ->
     [Key] ->
@@ -262,6 +291,11 @@ keyPut as key bins = evalContT $ do
             err <- lift $ peek errTmp
             pure $ Left err
 
+{-
+\| Perform atomic multiple sequential operations on the given key.
+\| Returned Record will contain all requested bins, that was declared in
+\| [Operator] in specified order (TODO: validate).
+-}
 keyOperate ::
     Aerospike ->
     Key ->
