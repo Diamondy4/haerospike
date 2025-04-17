@@ -7,15 +7,15 @@
 module Database.Aerospike where
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import qualified Data.Map.Strict as Map
+import Data.ByteString qualified as BS
+import Data.Map.Strict qualified as Map
 import Data.Proxy
 import Database.Aerospike.Internal
 import Database.Aerospike.Internal.Raw
 import Foreign
 import Foreign.C
-import qualified Foreign.Marshal.Utils as FMU
-import qualified Language.C.Inline as C
+import Foreign.Marshal.Utils qualified as FMU
+import Language.C.Inline qualified as C
 
 C.context (C.baseCtx <> C.bsCtx <> C.fptrCtx <> C.funCtx <> asCtx)
 C.include "<aerospike/aerospike.h>"
