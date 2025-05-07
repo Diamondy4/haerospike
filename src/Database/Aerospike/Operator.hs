@@ -11,12 +11,17 @@ import Data.Vector qualified as V
 import Data.Word (Word32)
 import Database.Aerospike.Value (Value)
 
+-- | Perform Read operation on record
 data ReadOp
-    = ReadSome [BS.ByteString]
-    | ReadAll
-    | ReadOne BS.ByteString
+    = -- | Read bins specified in the list. Only those bins will be loaded from server
+      ReadSome [BS.ByteString]
+    | -- | Read all bins related to given record
+      ReadAll
+    | -- | Read exactly one specified bin. Only this bin will be loaded from server
+      ReadOne BS.ByteString
     deriving stock (Show, Eq)
 
+-- | Perform write operation on record
 data WriteOp = WriteOp
     { binName :: BS.ByteString
     , value :: Value
@@ -34,18 +39,28 @@ data ModifyOp
     deriving stock (Show, Eq)
 
 data TTL
-    = DefaultTTL
-    | NoExpireTTL
-    | NoChangeTTL
-    | ClientDefaultTTL
-    | ManualSecs Word32
+    = -- | Use the server default ttl from the namespace
+      DefaultTTL
+    | -- | Do not expire the record
+      NoExpireTTL
+    | -- | Keep the existing record ttl when the record is updated
+      NoChangeTTL
+    | -- | Use the default client ttl in as_policy_operate
+      ClientDefaultTTL
+    | -- | Manually set ttl in seconds
+      ManualSecs Word32
     deriving stock (Show, Eq)
 
 data Operator
     = Read ReadOp
     | Write WriteOp
-    | Touch
-    | Modify BS.ByteString ModifyOp
-    | SetTTL TTL
-    | Delete
+    | -- | Update ttl.
+      Touch
+    | -- | Modify specified bin with operation. This modification will be visible to following
+      -- | reads in same `operate` transaction.
+      Modify BS.ByteString ModifyOp
+    | -- | Set ttl of the record.
+      SetTTL TTL
+    | -- | Delete record. All read bins still will be obtained.
+      Delete
     deriving stock (Show, Eq)

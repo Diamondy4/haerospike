@@ -179,6 +179,10 @@ keyGet as key = evalContT $ do
             pure $ Right record
         else lift $ Left <$> peek errTmp
 
+{- | Perform multiple read requests for given keys. Keys may be from different
+| namespaces and sets, but notice that read across those keys is not transactional.
+| All read records will be return in same order as specified keys.
+-}
 keyBatchedGet ::
     Aerospike ->
     [Key] ->
@@ -250,6 +254,9 @@ keyBatchedGet as keys = evalContT $ do
 statusFromCSide :: CInt -> AerospikeStatus
 statusFromCSide = toEnum @AerospikeStatus . fromIntegral
 
+{- | Perform put operation by specified key. Notice that bins, those was not specified in
+| in the list will be remain untouchable.
+-}
 keyPut ::
     Aerospike ->
     Key ->
@@ -291,10 +298,9 @@ keyPut as key bins = evalContT $ do
             err <- lift $ peek errTmp
             pure $ Left err
 
-{-
-\| Perform atomic multiple sequential operations on the given key.
-\| Returned Record will contain all requested bins, that was declared in
-\| [Operator] in specified order (TODO: validate).
+{- | Perform atomic multiple sequential operations on the given key.
+| Returned Record will contain all requested bins, that was declared in
+| [Operator] in specified order (TODO: validate).
 -}
 keyOperate ::
     Aerospike ->

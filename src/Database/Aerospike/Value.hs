@@ -8,6 +8,7 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Vector qualified as V
 
+-- | Aerospike bin value represented as Haskell value.
 data Value
     = VNil
     | VBoolean Bool
