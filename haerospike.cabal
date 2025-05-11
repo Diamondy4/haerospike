@@ -66,6 +66,7 @@ library
     , base              >=4.7 && <5
     , bytestring
     , containers
+    , generics-sop
     , inline-c
     , mtl
     , template-haskell
