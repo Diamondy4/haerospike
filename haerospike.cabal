@@ -85,23 +85,34 @@ executable aerospike-example-exe
     , base              >=4.7 && <5
     , bytestring
     , containers
+    , generics-sop
     , haerospike
     , inline-c
     , template-haskell
     , text
+    , vector
 
 test-suite aerospike-test
   import:         warnings, c-deps, extensions
   type:           exitcode-stdio-1.0
   main-is:        Spec.hs
-  other-modules:  Paths_haerospike
+  other-modules:
+    Helpers
+    Paths_haerospike
+
   hs-source-dirs: test
-  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  ghc-options:    -dynamic -threaded -rtsopts -with-rtsopts=-N
   build-depends:
     , base              >=4.7 && <5
     , bytestring
     , containers
+    , generics-sop
     , haerospike
+    , hedgehog
+    , hspec
+    , hspec-hedgehog
     , inline-c
+    , mtl
     , template-haskell
     , text
+    , vector
