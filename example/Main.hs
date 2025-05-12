@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -6,14 +7,19 @@ module Main where
 import Control.Monad (forM_)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
+import Data.Int (Int64)
 import Data.Map qualified as Map
 import Data.Text (Text)
+import Data.Vector qualified as V
 import Database.Aerospike
 import Database.Aerospike.Internal.Raw
 import Database.Aerospike.Key
 import Database.Aerospike.Operations
 import Database.Aerospike.Operator
+import Database.Aerospike.Record (FromAsBins (fromAsBins), Record (..), ToAsBins (toAsBins))
 import Database.Aerospike.Value
+import GHC.Generics qualified as GHC
+import Generics.SOP qualified as SOP
 
 simpleTest :: Aerospike -> ByteString -> ByteString -> IO ()
 simpleTest as ns set = do
@@ -35,7 +41,7 @@ setTest as ns set = do
     let key = "test_key"
     let key1 = MkKey ns set (KBytes key)
 
-    res <- keyPut as key1 [(binA, VString "binAValueModified"), (binB, VString "binBValueModified")]
+    res <- keyPut @[(ByteString, Value)] as key1 [(binA, VString "binAValueModified"), (binB, VString "binBValueModified")]
     print res
 
 batchTest :: Aerospike -> ByteString -> ByteString -> IO ()
@@ -56,13 +62,13 @@ batchTest as ns set = do
     let key2 = MkKey ns set (KString "key2")
     let key3 = MkKey ns set (KString "key3")
 
-    vals <- keyBatchedGet as [key1, key2, key3]
+    vals <- keyBatchedGet @[(ByteString, Value)] as [key1, key2, key3]
     print vals
 
-    res <- keyPut as key1 [(binA, VString "binAValueModified"), (binB, VString "binBValueModified")]
+    res <- keyPut @[(ByteString, Value)] as key1 [(binA, VString "binAValueModified"), (binB, VString "binBValueModified")]
     print res
 
-    vals <- keyGet as key1
+    vals <- keyGet @[(ByteString, Value)] as key1
     print vals
 
 operateTest :: Aerospike -> ByteString -> ByteString -> IO ()
@@ -75,11 +81,12 @@ operateTest as ns set = do
     res <- keyPut as opKey [(binA, VString "A"), (binB, VInteger 10)]
     print res
 
-    vals <- keyBatchedGet as [opKey]
+    vals <- keyBatchedGet @[(ByteString, Value)] as [opKey]
     print vals
 
     res <-
         keyOperate
+            @[(ByteString, Value)]
             as
             opKey
             [ Write $ WriteOp{binName = binA, value = VString "operate A"}
@@ -92,8 +99,32 @@ operateTest as ns set = do
 
     print res
 
-    vals <- keyBatchedGet as [opKey]
+    vals <- keyBatchedGet @[(ByteString, Value)] as [opKey]
     print vals
+
+data Foo = Foo
+    { binA :: V.Vector Int64
+    , binB :: Int64
+    , binC :: Text
+    , binD :: ByteString
+    }
+    deriving stock (Show, GHC.Generic)
+    deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo, ToAsBins, FromAsBins)
+
+recordTest :: Aerospike -> ByteString -> ByteString -> IO ()
+recordTest as ns set = do
+    let opKey = MkKey ns set (KString "recordTestKey")
+    let r = Foo (V.fromList [1, 2, 3]) 42 "fieldC" "fieldD"
+
+    print (toAsBins r)
+    res <- keyPut as opKey (toAsBins r)
+    print res
+
+    res <- keyGet @[(BS.ByteString, Value)] as opKey
+    print res
+
+    res <- keyGet @Foo as opKey
+    print res
 
 main :: IO ()
 main = do
@@ -114,5 +145,8 @@ main = do
         setTest as ns set
         batchTest as ns set
         operateTest as ns set
+
+    print "record test:"
+    recordTest as ns set
 
     print "done"

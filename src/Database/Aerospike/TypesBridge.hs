@@ -240,7 +240,7 @@ byteStringFromParts strPtr lenPtr = do
     len <- peek lenPtr
     BS.packCStringLen (str, fromIntegral len)
 
-parseRecord :: Ptr AsRecord -> IO Record
+parseRecord :: forall a. (FromAsBins a) => Ptr AsRecord -> IO (Maybe (Record a))
 parseRecord recordPtr = do
     binsCount <-
         [C.exp| int { $(as_record* recordPtr)->bins.size }|]
@@ -267,9 +267,13 @@ parseRecord recordPtr = do
     gen <- [C.exp| uint16_t { $(as_record* recordPtr)->gen }|]
     ttl <- [C.exp| uint32_t { $(as_record* recordPtr)->ttl }|]
 
-    pure $
-        MkRecord
-            { gen = gen
-            , ttl = ttl
-            , bins = mapMaybe (\(k, v) -> (,) <$> Just k <*> v) bins
-            }
+    pure $ do
+        bins' <- forM bins (\(k, v) -> (,) <$> Just k <*> v)
+        bins'' <- fromAsBins bins'
+
+        pure $
+            MkRecord
+                { gen = gen
+                , ttl = ttl
+                , bins = bins''
+                }

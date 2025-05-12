@@ -151,7 +151,12 @@ mkAsBatchRecords keys = do
     finalizer <- [C.exp|void (*as_batch_records_destroy)(as_batch_records*) { &as_batch_records_destroy }|]
     AsBatchRecords <$> newForeignPtr finalizer records
 
-keyGet :: Aerospike -> Key -> IO (Either AerospikeError Record)
+keyGet ::
+    forall a.
+    (FromAsBins a) =>
+    Aerospike ->
+    Key ->
+    IO (Either AerospikeError (Maybe (Record a)))
 keyGet as key = evalContT $ do
     asKey <- newKey key
     errTmp <- ContT $ alloca @AerospikeError
@@ -184,9 +189,11 @@ keyGet as key = evalContT $ do
 | All read records will be return in same order as specified keys.
 -}
 keyBatchedGet ::
+    forall a.
+    (FromAsBins a) =>
     Aerospike ->
     [Key] ->
-    IO (Either AerospikeError [Maybe Record])
+    IO (Either AerospikeError [Maybe (Record a)])
 keyBatchedGet as keys = evalContT $ do
     let keysLen = length keys
     let ckeysLen = toEnum @Word32 keysLen
@@ -236,7 +243,7 @@ keyBatchedGet as keys = evalContT $ do
 
                 case status of
                     AerospikeOk ->
-                        Just <$> do
+                        do
                             recordPtr <-
                                 [C.block| as_record* {
                                     as_vector* list = &$(as_batch_records* recordsPtr)->list;
@@ -258,11 +265,14 @@ statusFromCSide = toEnum @AerospikeStatus . fromIntegral
 | in the list will be remain untouchable.
 -}
 keyPut ::
+    forall v.
+    (ToAsBins v) =>
     Aerospike ->
     Key ->
-    [(ByteString, Value)] ->
+    v ->
     IO (Either AerospikeError ())
-keyPut as key bins = evalContT $ do
+keyPut as key v = evalContT $ do
+    let bins = toAsBins v
     let binsLen = toEnum @Word32 $ length bins
     asRecordPtr <- lift [C.block| as_record* { return as_record_new($(uint32_t binsLen)); }|]
     finalizer <- lift [C.exp|void (*as_record_destroy)(as_record*) { &as_record_destroy }|]
@@ -303,10 +313,12 @@ keyPut as key bins = evalContT $ do
 | [Operator] in specified order (TODO: validate).
 -}
 keyOperate ::
+    forall a.
+    (FromAsBins a) =>
     Aerospike ->
     Key ->
     [Operator] ->
-    IO (Either AerospikeError Record)
+    IO (Either AerospikeError (Maybe (Record a)))
 keyOperate as key ops = evalContT $ do
     let opsLen = toEnum @Word32 $ length ops
     asKey <- newKey key
