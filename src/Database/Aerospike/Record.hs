@@ -1,6 +1,8 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -20,6 +22,8 @@ import Database.Aerospike.Value (
     Value,
  )
 
+import Data.Kind (Constraint)
+import GHC.TypeLits (ErrorMessage (..), TypeError)
 import Generics.SOP (
     All,
     ConstructorInfo (Record),
@@ -27,7 +31,7 @@ import Generics.SOP (
     FieldInfo (..),
     Generic (..),
     HCollapse (hcollapse),
-    HasDatatypeInfo (datatypeInfo),
+    HasDatatypeInfo (..),
     I (..),
     K (..),
     NP (Nil, (:*)),
@@ -38,22 +42,21 @@ import Generics.SOP (
     unZ,
  )
 import Generics.SOP.NP (cmap_NP, czipWith_NP, sequence_NP)
+import Generics.SOP.Type.Metadata qualified as Meta
 
-data Record = MkRecord
+data Record a = MkRecord
     { gen :: Word16
     -- ^ Generation of the record. Updated each time modification performed on record.
     , ttl :: Word32
     -- ^ The time-to-live (expiration) of the record in seconds.
-    , bins :: [(BS.ByteString, Value)]
+    , bins :: a
     }
     deriving stock (Show, Eq, Ord)
 
 class FromAsBins a where
     fromAsBins :: [(BS.ByteString, Value)] -> Maybe a
     default fromAsBins ::
-        ( Generic a
-        , HasDatatypeInfo a
-        , Code a ~ '[xs]
+        ( IsRecord a xs con
         , All FromValue xs
         ) =>
         [(BS.ByteString, Value)] ->
@@ -63,20 +66,39 @@ class FromAsBins a where
 class ToAsBins a where
     toAsBins :: a -> [(BS.ByteString, Value)]
     default toAsBins ::
-        ( Generic a
-        , HasDatatypeInfo a
-        , Code a ~ '[xs]
+        ( IsRecord a xs con
         , All ToValue xs
         ) =>
         a ->
         [(BS.ByteString, Value)]
     toAsBins = gToAsBins
 
-gToAsBins ::
-    forall a xs.
+instance FromAsBins [(BS.ByteString, Value)] where
+    fromAsBins = Just
+
+instance ToAsBins [(BS.ByteString, Value)] where
+    toAsBins = id
+
+type family ConstructorInfos (info :: Meta.DatatypeInfo) :: [Meta.ConstructorInfo] where
+    ConstructorInfos ('Meta.ADT _ _ cons _) = cons
+    ConstructorInfos ('Meta.Newtype _ _ con) = '[con]
+
+type family ConstructorIsRecord (con :: Meta.ConstructorInfo) :: Constraint where
+    ConstructorIsRecord (Meta.Record _ _) = ()
+    ConstructorIsRecord (Meta.Infix _ _ _) = TypeError ('Text "Infix constructor are not supported")
+    ConstructorIsRecord (Meta.Constructor _) = TypeError ('Text "All fields must have name to associate it with bin")
+
+type IsRecord a xs con =
     ( Generic a
     , HasDatatypeInfo a
     , Code a ~ '[xs]
+    , ConstructorInfos (DatatypeInfoOf a) ~ '[con]
+    , ConstructorIsRecord con
+    )
+
+gToAsBins ::
+    forall a xs con.
+    ( IsRecord a xs con
     , All ToValue xs
     ) =>
     a ->
@@ -95,10 +117,8 @@ gToAsBins r =
     mkBin (FieldInfo name) (I x) = K (BS.pack name, toValue x)
 
 gFromAsBins ::
-    forall a xs.
-    ( Generic a
-    , HasDatatypeInfo a
-    , Code a ~ '[xs]
+    forall a xs con.
+    ( IsRecord a xs con
     , All FromValue xs
     ) =>
     [(BS.ByteString, Value)] ->
