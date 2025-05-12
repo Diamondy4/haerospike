@@ -20,6 +20,7 @@ import Data.Text.Encoding (encodeUtf8)
 import Data.Text.Foreign qualified as TF
 import Data.Vector qualified as V
 import Data.Vector.Storable.Mutable qualified as VM
+import Data.Word (Word8)
 import Database.Aerospike.Internal
 import Database.Aerospike.Internal.Raw
 import Database.Aerospike.Key
@@ -108,6 +109,11 @@ parseBinValue ptrVal = do
             text <- TF.peekCStringLen (ptr, fromIntegral len)
             writeIORef res $ Just $ VString text
 
+    let setBytes :: Ptr CChar -> CInt -> IO ()
+        setBytes ptr len = do
+            bytes <- BS.packCStringLen (ptr, fromIntegral len)
+            writeIORef res $ Just $ VBytes bytes
+
     listRes <- newIORef @[Value] []
     let listCallback :: Ptr AsVal -> Ptr () -> IO CBool
         listCallback valPtr _ = do
@@ -161,6 +167,11 @@ parseBinValue ptrVal = do
             case AS_STRING:
                 as_string* str_val = (as_string*)val;
                 $fun:(void (*setString)(char*, int))(as_string_get(str_val), as_string_len(str_val));
+                break;
+
+            case AS_BYTES:
+                as_bytes* bytes_val = (as_bytes*)val;
+                $fun:(void (*setBytes)(char*, int))((char*)as_bytes_get(bytes_val), as_bytes_size(bytes_val));
                 break;
 
             case AS_LIST:
