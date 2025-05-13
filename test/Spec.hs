@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -90,7 +91,8 @@ data Foo = Foo
     , binMap :: M.Map BS.ByteString (V.Vector Int64)
     }
     deriving stock (Show, Eq, GHC.Generic)
-    deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo, ToAsBins, FromAsBins)
+    deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo)
+    deriving (ToAsBins, FromAsBins) via (GHC.Generically Foo)
 
 genFoo :: Gen Foo
 genFoo =

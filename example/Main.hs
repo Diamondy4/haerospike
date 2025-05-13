@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -109,7 +110,8 @@ data Foo = Foo
     , binD :: ByteString
     }
     deriving stock (Show, GHC.Generic)
-    deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo, ToAsBins, FromAsBins)
+    deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo)
+    deriving (ToAsBins, FromAsBins) via (GHC.Generically Foo)
 
 recordTest :: Aerospike -> ByteString -> ByteString -> IO ()
 recordTest as ns set = do

@@ -1,6 +1,5 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -9,6 +8,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Database.Aerospike.Record where
 
@@ -23,6 +23,7 @@ import Database.Aerospike.Value (
  )
 
 import Data.Kind (Constraint)
+import GHC.Generics (Generically (..))
 import GHC.TypeLits (ErrorMessage (..), TypeError)
 import Generics.SOP (
     All,
@@ -56,23 +57,9 @@ data Record a = MkRecord
 
 class FromAsBins a where
     fromAsBins :: [(BS.ByteString, Value)] -> Maybe a
-    default fromAsBins ::
-        ( IsRecord a xs con
-        , All FromValue xs
-        ) =>
-        [(BS.ByteString, Value)] ->
-        Maybe a
-    fromAsBins = gFromAsBins
 
 class ToAsBins a where
     toAsBins :: a -> [(BS.ByteString, Value)]
-    default toAsBins ::
-        ( IsRecord a xs con
-        , All ToValue xs
-        ) =>
-        a ->
-        [(BS.ByteString, Value)]
-    toAsBins = gToAsBins
 
 instance FromAsBins [(BS.ByteString, Value)] where
     fromAsBins = Just
@@ -142,3 +129,9 @@ gFromAsBins bins =
                 fields <- sequence_NP $ cmap_NP (Proxy @FromValue) extractField name
                 pure $ to (SOP (Z fields))
             _ -> error "try to serialize unsupported data type"
+
+instance forall a xs con. (IsRecord a xs con, All ToValue xs) => ToAsBins (Generically a) where
+    toAsBins (Generically x) = gToAsBins x
+
+instance forall a xs con. (IsRecord a xs con, All FromValue xs) => FromAsBins (Generically a) where
+    fromAsBins = fmap Generically . gFromAsBins
