@@ -14,14 +14,14 @@ import Data.Either (isRight)
 import Data.Either.Extra (eitherToMaybe)
 import Data.Int (Int64)
 import Data.Map qualified as M
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, fromJust)
 import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
 import Data.Vec.Lazy qualified as A
 import Data.Vector qualified as V
 import Database.Aerospike (connectAerospikeClient, createAerospikeClient, setLogCallbackAerospike, setLogLevelAerospike)
 import Database.Aerospike.Internal.Raw (AerospikeLogLevel (..))
-import Database.Aerospike.Key (Key (..), PKey (..))
+import Database.Aerospike.Key (Key (..), PKey (..), mkNamespace, mkSet)
 import Database.Aerospike.Operations (keyBatchedGet, keyGet, keyOperate, keyPut)
 import Database.Aerospike.Operator (Operator (..))
 import Database.Aerospike.Record (FromAsBins (..), Record (..), ToAsBins (..))
@@ -139,8 +139,8 @@ main = do
             it "Roundtrip for Foo" $ hedgehog $ derivedRoundtrip @Foo genFoo
 
         describe "Aerospike operations" $ do
-            let ns = "test" :: BS.ByteString
-            let set = "test_set" :: BS.ByteString
+            let ns = fromJust $ mkNamespace "test"
+            let set = fromJust $ mkSet "test_set"
 
             let
                 withKeys :: forall n m. (MonadResource m, MonadIO m) => A.Vec n Text -> (A.Vec n Key -> m ()) -> m ()

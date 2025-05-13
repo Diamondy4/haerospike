@@ -44,8 +44,8 @@ C.include "<string.h>"
 -- FIXME: should $bs-cstr be copied?
 initKey :: AsKey -> Key -> ContT r IO ()
 initKey ptr key = do
-    cNamespace <- ContT $ BS.useAsCString key.namespace
-    cSet <- ContT $ BS.useAsCString key.set
+    cNamespace <- ContT $ BS.useAsCString $ namespaceBS key.namespace
+    cSet <- ContT $ BS.useAsCString $ setBS key.set
 
     case key.pKey of
         KInteger k ->

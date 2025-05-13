@@ -10,6 +10,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.Int (Int64)
 import Data.Map qualified as Map
+import Data.Maybe (fromJust)
 import Data.Text (Text)
 import Data.Vector qualified as V
 import Database.Aerospike
@@ -35,7 +36,7 @@ simpleTest as ns set = do
     val <- getBinBytesToStringUpdateTTL as ns set key binName 120
     print val
 
-setTest :: Aerospike -> ByteString -> ByteString -> IO ()
+setTest :: Aerospike -> Namespace -> Set -> IO ()
 setTest as ns set = do
     let binA = "binA"
     let binB = "binB"
@@ -45,7 +46,7 @@ setTest as ns set = do
     res <- keyPut @[(ByteString, Value)] as key1 [(binA, VString "binAValueModified"), (binB, VString "binBValueModified")]
     print res
 
-batchTest :: Aerospike -> ByteString -> ByteString -> IO ()
+batchTest :: Aerospike -> Namespace -> Set -> IO ()
 batchTest as ns set = do
     let binA = "binA"
     let binB = "binB"
@@ -53,10 +54,10 @@ batchTest as ns set = do
     let binBValue = "binBValue"
     let key = "test_key"
 
-    val <- setBinBytesToString as ns set key binA binAValue 120
+    val <- setBinBytesToString as (namespaceBS ns) (setBS set) key binA binAValue 120
     print val
 
-    val <- setBinBytesToString as ns set key binB binBValue 120
+    val <- setBinBytesToString as (namespaceBS ns) (setBS set) key binB binBValue 120
     print val
 
     let key1 = MkKey ns set (KBytes key)
@@ -72,7 +73,7 @@ batchTest as ns set = do
     vals <- keyGet @[(ByteString, Value)] as key1
     print vals
 
-operateTest :: Aerospike -> ByteString -> ByteString -> IO ()
+operateTest :: Aerospike -> Namespace -> Set -> IO ()
 operateTest as ns set = do
     let opKey = MkKey ns set (KString "opKey")
     let binA = "binA"
@@ -113,7 +114,7 @@ data Foo = Foo
     deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo)
     deriving (ToAsBins, FromAsBins) via (GHC.Generically Foo)
 
-recordTest :: Aerospike -> ByteString -> ByteString -> IO ()
+recordTest :: Aerospike -> Namespace -> Set -> IO ()
 recordTest as ns set = do
     let opKey = MkKey ns set (KString "recordTestKey")
     let r = Foo (V.fromList [1, 2, 3]) 42 "fieldC" "fieldD"
@@ -131,8 +132,8 @@ recordTest as ns set = do
 main :: IO ()
 main = do
     let ip = "127.0.0.1" :: ByteString
-        ns = "test"
-        set = "test_set"
+        ns = fromJust $ mkNamespace "test"
+        set = fromJust $ mkSet "test_set"
 
     as <- createAerospikeClient ip 3000 100
     setLogCallbackAerospike (\a b c d e -> print (a, b, c, d, e) >> pure True)
@@ -140,7 +141,7 @@ main = do
     conRes <- connectAerospikeClient as
     print conRes
 
-    simpleTest as ns set
+    simpleTest as (namespaceBS ns) (setBS set)
 
     -- Run many times to ensure that it will not crash by memory corruption
     forM_ [0 .. 100] $ \_ -> do
