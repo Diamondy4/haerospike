@@ -15,6 +15,8 @@ data PKey
 class ToKey a where
     toKey :: a -> PKey
 
+-- TODO: Actual size of namespace and set is limited to fixed number of bytes,
+-- need to somehow represent it in API
 data Key = MkKey
     { namespace :: ByteString
     , set :: ByteString

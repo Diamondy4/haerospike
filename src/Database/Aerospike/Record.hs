@@ -44,6 +44,7 @@ import Generics.SOP (
 import Generics.SOP.NP (cmap_NP, czipWith_NP, sequence_NP)
 import Generics.SOP.Type.Metadata qualified as Meta
 
+-- TODO: actually max bin name size is limited to 15, somehow represent it
 data Record a = MkRecord
     { gen :: Word16
     -- ^ Generation of the record. Updated each time modification performed on record.

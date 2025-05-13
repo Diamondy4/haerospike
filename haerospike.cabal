@@ -106,13 +106,17 @@ test-suite aerospike-test
     , base              >=4.7 && <5
     , bytestring
     , containers
+    , extra
     , generics-sop
     , haerospike
     , hedgehog
     , hspec
     , hspec-hedgehog
     , inline-c
+    , mmorph
     , mtl
+    , resourcet
     , template-haskell
     , text
+    , vec
     , vector
