@@ -92,7 +92,7 @@ operateTest as ns set = do
             opKey
             [ Write $ WriteOp{binName = binA, value = VString "operate A"}
             , Write $ WriteOp{binName = binB, value = VInteger 42}
-            , Modify binC (MPut $ Map.fromList [(VString "field1", VInteger 42), (VString "field2", VInteger 4)])
+            , Modify binC (MPut $ Map.fromList [(MString "field1", VInteger 42), (MString "field2", VInteger 4)])
             , SetTTL $ ManualSecs 100
             , Read $ ReadOne binA
             , Read $ ReadOne binC

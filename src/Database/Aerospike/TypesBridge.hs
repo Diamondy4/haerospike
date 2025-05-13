@@ -129,12 +129,12 @@ parseBinValue ptrVal = do
             let vec = V.fromList $ reverse list
             writeIORef res (Just $ VList vec)
 
-    mapRes <- newIORef @[(Value, Value)] []
+    mapRes <- newIORef @[(MapKey, Value)] []
     let mapCallback :: Ptr AsVal -> Ptr AsVal -> Ptr () -> IO CBool
         mapCallback keyPtr valPtr _ = do
             asKey <- AsVal <$> newForeignPtr_ keyPtr
             asVal <- AsVal <$> newForeignPtr_ valPtr
-            key <- parseBinValue asKey
+            key <- (>>= valueToMapKey) <$> parseBinValue asKey
             val <- parseBinValue asVal
             forM_ ((,) <$> key <*> val) $ \p -> do
                 modifyIORef mapRes (p :)
@@ -226,7 +226,7 @@ createVal = \case
         asMap <- lift [C.block| as_val* { return (as_val*)as_orderedmap_new($(uint32_t len)); }|]
 
         forM_ (Map.assocs map) $ \(k, v) -> do
-            cK <- createVal k
+            cK <- createVal $ embedMapKey k
             cV <- createVal v
             lift
                 [C.block| void {

@@ -25,7 +25,7 @@ import Database.Aerospike.Key (Key (..), PKey (..))
 import Database.Aerospike.Operations (keyBatchedGet, keyGet, keyOperate, keyPut)
 import Database.Aerospike.Operator (Operator (..))
 import Database.Aerospike.Record (FromAsBins (..), Record (..), ToAsBins (..))
-import Database.Aerospike.Value (Value (..))
+import Database.Aerospike.Value (MapKey (..), Value (..))
 import GHC.Generics qualified as GHC
 import Generics.SOP qualified as SOP
 import Hedgehog (Gen, MonadTest, PropertyT, assert, forAll, property, (===))
@@ -52,6 +52,14 @@ vecGen g = V.fromList <$> Gen.list (linear 0 20) g
 mapGen :: (Ord k) => Gen (k, v) -> Gen (M.Map k v)
 mapGen g = M.fromList <$> Gen.list (linear 0 20) g
 
+genMapKey :: Gen MapKey
+genMapKey =
+    Gen.choice
+        [ MInteger <$> Gen.int64 constantBounded
+        , MString <$> textGen
+        , MBytes <$> Gen.bytes (linear 0 300)
+        ]
+
 genValue :: Gen Value
 genValue =
     Gen.recursive
@@ -63,7 +71,7 @@ genValue =
         , VBytes <$> Gen.bytes (linear 0 300)
         ]
         [ VList <$> vecGen genValue
-        , VMap <$> mapGen ((,) <$> Gen.filter validKey genValue <*> genValue)
+        , VMap <$> mapGen ((,) <$> genMapKey <*> genValue)
         ]
 
 derivedRoundtrip ::

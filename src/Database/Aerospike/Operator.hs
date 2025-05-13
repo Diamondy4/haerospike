@@ -9,7 +9,7 @@ import Data.Map qualified as Map
 import Data.Text (Text)
 import Data.Vector qualified as V
 import Data.Word (Word32)
-import Database.Aerospike.Value (Value)
+import Database.Aerospike.Value (MapKey, Value)
 
 -- | Perform Read operation on record
 data ReadOp
@@ -35,7 +35,7 @@ data ModifyOp
     | SAppend Text
     | SPrepend Text
     | LAppend (V.Vector Value)
-    | MPut (Map.Map Value Value)
+    | MPut (Map.Map MapKey Value)
     deriving stock (Show, Eq)
 
 data TTL
