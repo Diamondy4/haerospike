@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 module Main where
 
@@ -18,10 +19,19 @@ import Database.Aerospike.Internal.Raw
 import Database.Aerospike.Key
 import Database.Aerospike.Operations
 import Database.Aerospike.Operator
-import Database.Aerospike.Record (FromAsBins (fromAsBins), Record (..), ToAsBins (toAsBins))
+import Database.Aerospike.Record (BinName, FromAsBins (fromAsBins), RawBins, Record (..), ToAsBins (toAsBins), binNameBS, mkBinName)
 import Database.Aerospike.Value
 import GHC.Generics qualified as GHC
 import Generics.SOP qualified as SOP
+
+binA :: BinName
+binA = fromJust $ mkBinName "binA"
+
+binB :: BinName
+binB = fromJust $ mkBinName "binB"
+
+binC :: BinName
+binC = fromJust $ mkBinName "binC"
 
 simpleTest :: Aerospike -> ByteString -> ByteString -> IO ()
 simpleTest as ns set = do
@@ -38,57 +48,50 @@ simpleTest as ns set = do
 
 setTest :: Aerospike -> Namespace -> Set -> IO ()
 setTest as ns set = do
-    let binA = "binA"
-    let binB = "binB"
     let key = "test_key"
     let key1 = MkKey ns set (KBytes key)
 
-    res <- keyPut @[(ByteString, Value)] as key1 [(binA, VString "binAValueModified"), (binB, VString "binBValueModified")]
+    res <- keyPut @RawBins as key1 [(binA, VString "binAValueModified"), (binB, VString "binBValueModified")]
     print res
 
 batchTest :: Aerospike -> Namespace -> Set -> IO ()
 batchTest as ns set = do
-    let binA = "binA"
-    let binB = "binB"
     let binAValue = "binAValue"
     let binBValue = "binBValue"
     let key = "test_key"
 
-    val <- setBinBytesToString as (namespaceBS ns) (setBS set) key binA binAValue 120
+    val <- setBinBytesToString as (namespaceBS ns) (setBS set) key (binNameBS binA) binAValue 120
     print val
 
-    val <- setBinBytesToString as (namespaceBS ns) (setBS set) key binB binBValue 120
+    val <- setBinBytesToString as (namespaceBS ns) (setBS set) key (binNameBS binB) binBValue 120
     print val
 
     let key1 = MkKey ns set (KBytes key)
     let key2 = MkKey ns set (KString "key2")
     let key3 = MkKey ns set (KString "key3")
 
-    vals <- keyBatchedGet @[(ByteString, Value)] as [key1, key2, key3]
+    vals <- keyBatchedGet @RawBins as [key1, key2, key3]
     print vals
 
-    res <- keyPut @[(ByteString, Value)] as key1 [(binA, VString "binAValueModified"), (binB, VString "binBValueModified")]
+    res <- keyPut @RawBins as key1 [(binA, VString "binAValueModified"), (binB, VString "binBValueModified")]
     print res
 
-    vals <- keyGet @[(ByteString, Value)] as key1
+    vals <- keyGet @RawBins as key1
     print vals
 
 operateTest :: Aerospike -> Namespace -> Set -> IO ()
 operateTest as ns set = do
     let opKey = MkKey ns set (KString "opKey")
-    let binA = "binA"
-    let binB = "binB"
-    let binC = "binC"
 
     res <- keyPut as opKey [(binA, VString "A"), (binB, VInteger 10)]
     print res
 
-    vals <- keyBatchedGet @[(ByteString, Value)] as [opKey]
+    vals <- keyBatchedGet @RawBins as [opKey]
     print vals
 
     res <-
         keyOperate
-            @[(ByteString, Value)]
+            @RawBins
             as
             opKey
             [ Write $ WriteOp{binName = binA, value = VString "operate A"}
@@ -101,7 +104,7 @@ operateTest as ns set = do
 
     print res
 
-    vals <- keyBatchedGet @[(ByteString, Value)] as [opKey]
+    vals <- keyBatchedGet @RawBins as [opKey]
     print vals
 
 data Foo = Foo
@@ -123,7 +126,7 @@ recordTest as ns set = do
     res <- keyPut as opKey (toAsBins r)
     print res
 
-    res <- keyGet @[(BS.ByteString, Value)] as opKey
+    res <- keyGet @RawBins as opKey
     print res
 
     res <- keyGet @Foo as opKey

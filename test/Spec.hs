@@ -24,7 +24,7 @@ import Database.Aerospike.Internal.Raw (AerospikeLogLevel (..))
 import Database.Aerospike.Key (Key (..), PKey (..), mkNamespace, mkSet)
 import Database.Aerospike.Operations (keyBatchedGet, keyGet, keyOperate, keyPut)
 import Database.Aerospike.Operator (Operator (..))
-import Database.Aerospike.Record (FromAsBins (..), Record (..), ToAsBins (..))
+import Database.Aerospike.Record (BinName, FromAsBins (..), RawBins, Record (..), ToAsBins (..), mkBinName)
 import Database.Aerospike.Value (MapKey (..), Value (..))
 import GHC.Generics qualified as GHC
 import Generics.SOP qualified as SOP
@@ -112,10 +112,8 @@ genFoo =
         <*> vecGen (vecGen textGen)
         <*> mapGen ((,) <$> Gen.bytes (linear 0 300) <*> vecGen (Gen.int64 constantBounded))
 
-type RawBins = [(BS.ByteString, Value)]
-
-genBinName :: Gen BS.ByteString
-genBinName = encodeUtf8 <$> Gen.text (linear 1 15) Gen.alpha
+genBinName :: Gen BinName
+genBinName = fromJust . mkBinName . encodeUtf8 <$> Gen.text (linear 1 15) Gen.alpha
 
 genBins :: Gen RawBins
 genBins = M.assocs . M.fromList <$> Gen.list (linear 1 20) ((,) <$> genBinName <*> Gen.filter (VNil /=) genValue)

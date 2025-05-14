@@ -10,7 +10,15 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Database.Aerospike.Record where
+module Database.Aerospike.Record (
+    BinName,
+    binNameBS,
+    mkBinName,
+    Record (..),
+    FromAsBins (..),
+    ToAsBins (..),
+    RawBins,
+) where
 
 import Data.ByteString qualified as BS hiding (pack)
 import Data.ByteString.Char8 qualified as BS
@@ -22,7 +30,9 @@ import Database.Aerospike.Value (
     Value,
  )
 
+import Control.Monad (guard)
 import Data.Kind (Constraint)
+import Data.Maybe (fromJust)
 import GHC.Generics (Generically (..))
 import GHC.TypeLits (ErrorMessage (..), TypeError)
 import Generics.SOP (
@@ -45,6 +55,19 @@ import Generics.SOP (
 import Generics.SOP.NP (cmap_NP, czipWith_NP, sequence_NP)
 import Generics.SOP.Type.Metadata qualified as Meta
 
+newtype BinName = BinName {bs :: BS.ByteString}
+    deriving stock (Eq, Show, Ord)
+
+binNameBS :: BinName -> BS.ByteString
+binNameBS = (.bs)
+
+mkBinName :: BS.ByteString -> Maybe BinName
+mkBinName x = do
+    guard (BS.length x < 16)
+    pure $ BinName x
+
+type RawBins = [(BinName, Value)]
+
 -- TODO: actually max bin name size is limited to 15, somehow represent it
 data Record a = MkRecord
     { gen :: Word16
@@ -56,15 +79,15 @@ data Record a = MkRecord
     deriving stock (Show, Eq, Ord)
 
 class FromAsBins a where
-    fromAsBins :: [(BS.ByteString, Value)] -> Maybe a
+    fromAsBins :: [(BinName, Value)] -> Maybe a
 
 class ToAsBins a where
-    toAsBins :: a -> [(BS.ByteString, Value)]
+    toAsBins :: a -> [(BinName, Value)]
 
-instance FromAsBins [(BS.ByteString, Value)] where
+instance FromAsBins [(BinName, Value)] where
     fromAsBins = Just
 
-instance ToAsBins [(BS.ByteString, Value)] where
+instance ToAsBins [(BinName, Value)] where
     toAsBins = id
 
 type family ConstructorInfos (info :: Meta.DatatypeInfo) :: [Meta.ConstructorInfo] where
@@ -90,7 +113,7 @@ gToAsBins ::
     , All ToValue xs
     ) =>
     a ->
-    [(BS.ByteString, Value)]
+    [(BinName, Value)]
 gToAsBins r =
     let
         fields = unZ . unSOP . from $ r
@@ -101,19 +124,20 @@ gToAsBins r =
             Newtype _ _ (Record _ name) -> hcollapse $ czipWith_NP (Proxy @ToValue) mkBin name fields
             _ -> error "try to serialize unsupported data type"
   where
-    mkBin :: forall t. (ToValue t) => FieldInfo t -> I t -> K (BS.ByteString, Value) t
-    mkBin (FieldInfo name) (I x) = K (BS.pack name, toValue x)
+    -- TODO: add constraint at type level that fields have length no more than 15
+    mkBin :: forall t. (ToValue t) => FieldInfo t -> I t -> K (BinName, Value) t
+    mkBin (FieldInfo name) (I x) = K (fromJust $ mkBinName $ BS.pack name, toValue x)
 
 gFromAsBins ::
     forall a xs con.
     ( IsRecord a xs con
     , All FromValue xs
     ) =>
-    [(BS.ByteString, Value)] ->
+    [(BinName, Value)] ->
     Maybe a
 gFromAsBins bins =
     let
-        mp = M.fromList bins
+        mp = M.fromList $ (\(k, v) -> (k.bs, v)) <$> bins
         lookup name = mp M.!? BS.pack name
 
         extractField :: forall t. (FromValue t) => FieldInfo t -> Maybe t

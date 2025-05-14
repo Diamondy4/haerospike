@@ -9,21 +9,22 @@ import Data.Map qualified as Map
 import Data.Text (Text)
 import Data.Vector qualified as V
 import Data.Word (Word32)
+import Database.Aerospike.Record (BinName)
 import Database.Aerospike.Value (MapKey, Value)
 
 -- | Perform Read operation on record
 data ReadOp
     = -- | Read bins specified in the list. Only those bins will be loaded from server
-      ReadSome [BS.ByteString]
+      ReadSome [BinName]
     | -- | Read all bins related to given record
       ReadAll
     | -- | Read exactly one specified bin. Only this bin will be loaded from server
-      ReadOne BS.ByteString
+      ReadOne BinName
     deriving stock (Show, Eq)
 
 -- | Perform write operation on record
 data WriteOp = WriteOp
-    { binName :: BS.ByteString
+    { binName :: BinName
     , value :: Value
     }
     deriving stock (Show, Eq)
@@ -58,7 +59,7 @@ data Operator
       Touch
     | -- | Modify specified bin with operation. This modification will be visible to following
       -- | reads in same `operate` transaction.
-      Modify BS.ByteString ModifyOp
+      Modify BinName ModifyOp
     | -- | Set ttl of the record.
       SetTTL TTL
     | -- | Delete record. All read bins still will be obtained.

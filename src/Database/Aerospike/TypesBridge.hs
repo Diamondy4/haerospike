@@ -279,7 +279,7 @@ parseRecord recordPtr = do
     ttl <- [C.exp| uint32_t { $(as_record* recordPtr)->ttl }|]
 
     pure $ do
-        bins' <- forM bins (\(k, v) -> (,) <$> Just k <*> v)
+        bins' <- forM bins (\(k, v) -> (,) <$> mkBinName k <*> v)
         bins'' <- fromAsBins bins'
 
         pure $

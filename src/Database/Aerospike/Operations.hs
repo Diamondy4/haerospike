@@ -280,7 +280,7 @@ keyPut as key v = evalContT $ do
 
     forM_ bins $ \(binName, binValue) -> do
         val <- createVal binValue
-        cBinName <- ContT $ BS.useAsCString binName
+        cBinName <- ContT $ BS.useAsCString $ binNameBS binName
         lift
             [C.block| void {
                 as_record_set($fptr-ptr:(as_record* asRecord), $(char* cBinName), (as_bin_value*)$(as_val* val));
@@ -329,19 +329,19 @@ keyOperate as key ops = evalContT $ do
     forM_ ops $ \case
         Read ReadAll -> lift [C.block| void { as_operations_add_read_all($fptr-ptr:(as_operations* asOperations)); }|]
         Read (ReadSome binNames) -> forM_ binNames $ \binName -> do
-            bin <- ContT $ BS.useAsCString binName
+            bin <- ContT $ BS.useAsCString $ binNameBS binName
             lift
                 [C.block| void {
                 as_operations_add_read($fptr-ptr:(as_operations* asOperations), $(char* bin));
             }|]
         Read (ReadOne binName) -> do
-            bin <- ContT $ BS.useAsCString binName
+            bin <- ContT $ BS.useAsCString $ binNameBS binName
             lift
                 [C.block| void {
                 as_operations_add_read($fptr-ptr:(as_operations* asOperations), $(char* bin));
             }|]
         Write op -> do
-            bin <- ContT $ BS.useAsCString op.binName
+            bin <- ContT $ BS.useAsCString $ binNameBS op.binName
             asVal <- createVal op.value
             lift
                 [C.block| void {
@@ -357,7 +357,7 @@ keyOperate as key ops = evalContT $ do
                 as_operations_add_touch($fptr-ptr:(as_operations* asOperations));
             }|]
         Modify binName op -> do
-            bin <- ContT $ BS.useAsCString binName
+            bin <- ContT $ BS.useAsCString $ binNameBS binName
 
             case op of
                 Incr delta -> do
