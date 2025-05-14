@@ -29,4 +29,11 @@ asTypesTable =
     , (C.TypeName "as_key", [t|AsKey|])
     , (C.TypeName "as_error", [t|AerospikeError|])
     , (C.TypeName "as_log_level", [t|AerospikeLogLevel|])
+    , (C.TypeName "as_policy_base", [t|AsPolicyBase|])
+    , (C.TypeName "as_policy_read", [t|AsPolicyRead|])
+    , (C.TypeName "as_policy_write", [t|AsPolicyWrite|])
+    , (C.TypeName "as_policy_key", [t|AsPolicyKey|])
+    , (C.TypeName "as_policy_exists", [t|AsPolicyExists|])
+    , (C.TypeName "as_policy_batch", [t|AsPolicyBatch|])
+    , (C.TypeName "as_policy_operate", [t|AsPolicyOperate|])
     ]

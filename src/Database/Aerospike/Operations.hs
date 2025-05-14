@@ -20,6 +20,7 @@ import Control.Monad.Trans
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.Map.Strict qualified as Map
+import Data.Maybe (isJust)
 import Data.Proxy
 import Data.Text (Text, pack)
 import Data.Text.Encoding (encodeUtf8)
@@ -30,6 +31,8 @@ import Database.Aerospike.Internal
 import Database.Aerospike.Internal.Raw
 import Database.Aerospike.Key
 import Database.Aerospike.Operator
+import Database.Aerospike.Policy.CBridge
+import Database.Aerospike.Policy.Policy
 import Database.Aerospike.Record
 import Database.Aerospike.TypesBridge
 import Database.Aerospike.Value
@@ -38,7 +41,7 @@ import Foreign.C
 import GHC.IO.Handle.Text (memcpy)
 import Language.C.Inline qualified as C
 
-C.context (C.baseCtx <> C.bsCtx <> C.fptrCtx <> asCtx <> C.vecCtx)
+C.context (C.baseCtx <> C.bsCtx <> C.fptrCtx <> asCtx <> C.vecCtx <> C.funCtx)
 C.include "<aerospike/aerospike.h>"
 C.include "<aerospike/aerospike_key.h>"
 C.include "<aerospike/aerospike_batch.h>"
@@ -155,21 +158,31 @@ keyGet ::
     forall a.
     (FromAsBins a) =>
     Aerospike ->
+    Maybe ReadPolicy ->
     Key ->
     IO (Either AerospikeError (Maybe (Record a)))
-keyGet as key = evalContT $ do
+keyGet as policy key = evalContT $ do
     asKey <- newKey key
     errTmp <- ContT $ alloca @AerospikeError
+
+    let hasPolicy = fromBool @CBool $ isJust policy
+
+    let
+        initPolicy :: Ptr AsPolicyRead -> IO ()
+        initPolicy ptr = forM_ policy $ \p -> initReadPolicy ptr p
 
     recordPtr <-
         lift
             [C.block| as_record* {
                 as_record* r = NULL;
+                as_policy_read read_policy;
+
+                $fun:(void (*initPolicy)(as_policy_read*))(&read_policy);
 
                 as_status status = aerospike_key_get(
                     $fptr-ptr:(aerospike* as),
                     $(as_error* errTmp),
-                    NULL,
+                    $(bool hasPolicy) ? &read_policy : NULL,
                     $fptr-ptr:(as_key* asKey),
                     &r
                 );
@@ -184,19 +197,22 @@ keyGet as key = evalContT $ do
             pure $ Right record
         else lift $ Left <$> peek errTmp
 
-{- | Perform multiple read requests for given keys. Keys may be from different
-| namespaces and sets, but notice that read across those keys is not transactional.
-| All read records will be return in same order as specified keys.
+{- |
+Perform multiple read requests for given keys. Keys may be from different
+namespaces and sets, but notice that read across those keys is not transactional.
+All read records will be return in same order as specified keys.
 -}
 keyBatchedGet ::
     forall a.
     (FromAsBins a) =>
     Aerospike ->
+    Maybe BatchPolicy ->
     [Key] ->
     IO (Either AerospikeError [Maybe (Record a)])
-keyBatchedGet as keys = evalContT $ do
+keyBatchedGet as policy keys = evalContT $ do
     let keysLen = length keys
     let ckeysLen = toEnum @Word32 keysLen
+    let hasPolicy = fromBool @CBool $ isJust policy
 
     errTmp <- ContT $ alloca @AerospikeError
     records <- lift $ mkAsBatchRecords keysLen
@@ -213,14 +229,21 @@ keyBatchedGet as keys = evalContT $ do
         asKey <- lift $ AsKey <$> newForeignPtr_ asKeyPtr
         initKey asKey key
 
+    let
+        initPolicy :: Ptr AsPolicyBatch -> IO ()
+        initPolicy ptr = forM_ policy $ \p -> initBatchPolicy ptr p
+
     status <-
         lift $
             statusFromCSide
                 <$> [C.block| int { 
+        as_policy_batch p;
+        $fun:(void (*initPolicy)(as_policy_batch*))(&p);
+        
         return aerospike_batch_read(
             $fptr-ptr:(aerospike* as), 
             $(as_error* errTmp), 
-            NULL, 
+            $(bool hasPolicy) ? &p : NULL, 
             $fptr-ptr:(as_batch_records* records)
         );
         }|]
@@ -261,22 +284,29 @@ keyBatchedGet as keys = evalContT $ do
 statusFromCSide :: CInt -> AerospikeStatus
 statusFromCSide = toEnum @AerospikeStatus . fromIntegral
 
-{- | Perform put operation by specified key. Notice that bins, those was not specified in
-| in the list will be remain untouchable.
+{- |
+Perform put operation by specified key. Notice that bins, those was not specified in
+in the list will be remain untouchable.
 -}
 keyPut ::
     forall v.
     (ToAsBins v) =>
     Aerospike ->
+    Maybe WritePolicy ->
     Key ->
     v ->
     IO (Either AerospikeError ())
-keyPut as key v = evalContT $ do
+keyPut as policy key v = evalContT $ do
     let bins = toAsBins v
     let binsLen = toEnum @Word32 $ length bins
+    let hasPolicy = fromBool @CBool $ isJust policy
     asRecordPtr <- lift [C.block| as_record* { return as_record_new($(uint32_t binsLen)); }|]
     finalizer <- lift [C.exp|void (*as_record_destroy)(as_record*) { &as_record_destroy }|]
     asRecord <- lift $ AsRecord <$> newForeignPtr finalizer asRecordPtr
+
+    let
+        initPolicy :: Ptr AsPolicyWrite -> IO ()
+        initPolicy ptr = forM_ policy $ \p -> initWritePolicy ptr p
 
     forM_ bins $ \(binName, binValue) -> do
         val <- createVal binValue
@@ -293,10 +323,14 @@ keyPut as key v = evalContT $ do
         lift $
             statusFromCSide
                 <$> [C.block| int {
+                as_policy_write write_policy;
+
+                $fun:(void (*initPolicy)(as_policy_write*))(&write_policy);
+
                 return aerospike_key_put(
                     $fptr-ptr:(aerospike* as),
                     $(as_error* errTmp),
-                    NULL,
+                    $(bool hasPolicy) ? &write_policy : NULL,
                     $fptr-ptr:(as_key* asKey),
                     $fptr-ptr:(as_record* asRecord)
                 );
@@ -308,18 +342,20 @@ keyPut as key v = evalContT $ do
             err <- lift $ peek errTmp
             pure $ Left err
 
-{- | Perform atomic multiple sequential operations on the given key.
-| Returned Record will contain all requested bins, that was declared in
-| [Operator] in specified order (TODO: validate).
+{- |
+Perform atomic multiple sequential operations on the given key.
+Returned Record will contain all requested bins, that was declared in
+[Operator] in specified order (TODO: validate).
 -}
 keyOperate ::
     forall a.
     (FromAsBins a) =>
     Aerospike ->
+    Maybe OperatePolicy ->
     Key ->
     [Operator] ->
     IO (Either AerospikeError (Maybe (Record a)))
-keyOperate as key ops = evalContT $ do
+keyOperate as policy key ops = evalContT $ do
     let opsLen = toEnum @Word32 $ length ops
     asKey <- newKey key
     asOperationsPtr <- lift [C.block| as_operations* { return as_operations_new($(uint32_t opsLen)); }|]
@@ -454,16 +490,25 @@ keyOperate as key ops = evalContT $ do
                 as_operations_add_delete($fptr-ptr:(as_operations* asOperations));
             }|]
 
+    let
+        hasPolicy = fromBool @CBool $ isJust policy
+
+        initPolicy :: Ptr AsPolicyOperate -> IO ()
+        initPolicy ptr = forM_ policy $ \p -> initOperatePolicy ptr p
+
     errTmp <- ContT $ alloca @AerospikeError
     recordPtr <-
         lift
             [C.block| as_record* {
                 as_record* r = NULL;
+                as_policy_operate p;
+
+                $fun:(void (*initPolicy)(as_policy_operate*))(&p);
 
                 as_status status = aerospike_key_operate(
                     $fptr-ptr:(aerospike* as),
                     $(as_error* errTmp),
-                    NULL,
+                    $(bool hasPolicy) ? &p : NULL,
                     $fptr-ptr:(as_key* asKey),
                     $fptr-ptr:(as_operations* asOperations),
                     &r

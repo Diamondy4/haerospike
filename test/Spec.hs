@@ -144,19 +144,19 @@ main = do
                 withKeys :: forall n m. (MonadResource m, MonadIO m) => A.Vec n Text -> (A.Vec n Key -> m ()) -> m ()
                 withKeys keys f = do
                     let keys' = fmap (MkKey ns set . KString) keys
-                    releaseKeys <- forM keys' $ \key -> register . void $ keyOperate @RawBins as key [Delete]
+                    releaseKeys <- forM keys' $ \key -> register . void $ keyOperate @RawBins as Nothing key [Delete]
                     f keys'
                     forM_ releaseKeys release
 
             let
                 keyPut' :: forall m. (MonadIO m, MonadTest m) => Key -> RawBins -> m ()
                 keyPut' k b = do
-                    resPut <- liftIO (keyPut as k b)
+                    resPut <- liftIO (keyPut as Nothing k b)
                     assert $ isRight resPut
 
                 keyGet' :: forall a m. (FromAsBins a, MonadIO m, MonadTest m) => Key -> m (Record a)
                 keyGet' key = do
-                    res <- liftIO $ keyGet @a as key
+                    res <- liftIO $ keyGet @a as Nothing key
                     case res of
                         Right (Just r) -> pure r
                         _ -> failWith Nothing "Failed to get value from aerospike"
@@ -178,7 +178,7 @@ main = do
                     keyPut' key2 bins2
                     keyPut' key3 bins3
 
-                    res <- liftIO $ keyBatchedGet @RawBins as [key1, key2, key3]
+                    res <- liftIO $ keyBatchedGet @RawBins as Nothing [key1, key2, key3]
                     let res' = eitherToMaybe $ fmap (fmap (.bins) . catMaybes) res
 
                     Just [bins1, bins2, bins3] === res'

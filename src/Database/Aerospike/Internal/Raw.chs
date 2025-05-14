@@ -41,6 +41,20 @@ import Control.Exception (Exception)
 
 {# pointer *as_operations as AsOperations foreign newtype #}
 
+{# pointer *as_policy_base as AsPolicyBase foreign newtype #}
+
+{# pointer *as_policy_key as AsPolicyKey foreign newtype #}
+
+{# pointer *as_policy_exists as AsPolicyExists foreign newtype #}
+
+{# pointer *as_policy_read as AsPolicyRead foreign newtype #}
+
+{# pointer *as_policy_write as AsPolicyWrite foreign newtype #}
+
+{# pointer *as_policy_batch as AsPolicyBatch foreign newtype #}
+
+{# pointer *as_policy_operate as AsPolicyOperate foreign newtype #}
+
 data AerospikeError = AerospikeError
   { code :: AerospikeStatus
   , file :: ByteString

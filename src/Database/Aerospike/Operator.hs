@@ -57,8 +57,9 @@ data Operator
     | Write WriteOp
     | -- | Update ttl.
       Touch
-    | -- | Modify specified bin with operation. This modification will be visible to following
-      -- | reads in same `operate` transaction.
+    | -- |
+      -- Modify specified bin with operation. This modification will be visible to following
+      -- reads in same `operate` transaction.
       Modify BinName ModifyOp
     | -- | Set ttl of the record.
       SetTTL TTL

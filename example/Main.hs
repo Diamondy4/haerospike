@@ -51,7 +51,7 @@ setTest as ns set = do
     let key = "test_key"
     let key1 = MkKey ns set (KBytes key)
 
-    res <- keyPut @RawBins as key1 [(binA, VString "binAValueModified"), (binB, VString "binBValueModified")]
+    res <- keyPut @RawBins as Nothing key1 [(binA, VString "binAValueModified"), (binB, VString "binBValueModified")]
     print res
 
 batchTest :: Aerospike -> Namespace -> Set -> IO ()
@@ -70,29 +70,30 @@ batchTest as ns set = do
     let key2 = MkKey ns set (KString "key2")
     let key3 = MkKey ns set (KString "key3")
 
-    vals <- keyBatchedGet @RawBins as [key1, key2, key3]
+    vals <- keyBatchedGet @RawBins as Nothing [key1, key2, key3]
     print vals
 
-    res <- keyPut @RawBins as key1 [(binA, VString "binAValueModified"), (binB, VString "binBValueModified")]
+    res <- keyPut @RawBins as Nothing key1 [(binA, VString "binAValueModified"), (binB, VString "binBValueModified")]
     print res
 
-    vals <- keyGet @RawBins as key1
+    vals <- keyGet @RawBins as Nothing key1
     print vals
 
 operateTest :: Aerospike -> Namespace -> Set -> IO ()
 operateTest as ns set = do
     let opKey = MkKey ns set (KString "opKey")
 
-    res <- keyPut as opKey [(binA, VString "A"), (binB, VInteger 10)]
+    res <- keyPut as Nothing opKey [(binA, VString "A"), (binB, VInteger 10)]
     print res
 
-    vals <- keyBatchedGet @RawBins as [opKey]
+    vals <- keyBatchedGet @RawBins as Nothing [opKey]
     print vals
 
     res <-
         keyOperate
             @RawBins
             as
+            Nothing
             opKey
             [ Write $ WriteOp{binName = binA, value = VString "operate A"}
             , Write $ WriteOp{binName = binB, value = VInteger 42}
@@ -104,7 +105,7 @@ operateTest as ns set = do
 
     print res
 
-    vals <- keyBatchedGet @RawBins as [opKey]
+    vals <- keyBatchedGet @RawBins as Nothing [opKey]
     print vals
 
 data Foo = Foo
@@ -123,13 +124,13 @@ recordTest as ns set = do
     let r = Foo (V.fromList [1, 2, 3]) 42 "fieldC" "fieldD"
 
     print (toAsBins r)
-    res <- keyPut as opKey (toAsBins r)
+    res <- keyPut as Nothing opKey (toAsBins r)
     print res
 
-    res <- keyGet @RawBins as opKey
+    res <- keyGet @RawBins as Nothing opKey
     print res
 
-    res <- keyGet @Foo as opKey
+    res <- keyGet @Foo as Nothing opKey
     print res
 
 main :: IO ()
