@@ -4,24 +4,52 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
-module Database.Aerospike.Operations where
+module Database.Aerospike.Operations (
+    setBinBytesToString,
+    getBinBytesToStringUpdateTTL,
+    keyBatchedGet,
+    keyPut,
+    keyGet,
+    keyOperate,
+)
+where
 
+import Control.Monad (forM, forM_)
+import Control.Monad.Cont
+import Control.Monad.Trans
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import qualified Data.Map.Strict as Map
+import Data.ByteString qualified as BS
+import Data.Map.Strict qualified as Map
+import Data.Maybe (isJust)
 import Data.Proxy
+import Data.Text (Text, pack)
+import Data.Text.Encoding (encodeUtf8)
+import Data.Text.Foreign qualified as TF
+import Data.Vector.Storable qualified as V
+import Data.Vector.Storable.Mutable qualified as VM
 import Database.Aerospike.Internal
 import Database.Aerospike.Internal.Raw
+import Database.Aerospike.Key
+import Database.Aerospike.Operator
+import Database.Aerospike.Policy.CBridge
+import Database.Aerospike.Policy.Policy
+import Database.Aerospike.Record
+import Database.Aerospike.TypesBridge
+import Database.Aerospike.Value
 import Foreign
 import Foreign.C
 import GHC.IO.Handle.Text (memcpy)
-import qualified Language.C.Inline as C
-import qualified Data.Text.Foreign as TF
-import Data.Text (Text)
+import Language.C.Inline qualified as C
 
-C.context (C.baseCtx <> C.bsCtx <> C.fptrCtx <> asCtx)
+C.context (C.baseCtx <> C.bsCtx <> C.fptrCtx <> asCtx <> C.vecCtx <> C.funCtx)
 C.include "<aerospike/aerospike.h>"
 C.include "<aerospike/aerospike_key.h>"
+C.include "<aerospike/aerospike_batch.h>"
+C.include "<aerospike/as_vector.h>"
+C.include "<aerospike/as_operations.h>"
+C.include "<aerospike/as_list_operations.h>"
+C.include "<aerospike/as_map_operations.h>"
+C.include "<aerospike/as_record.h>"
 
 setBinBytesToString ::
     Aerospike ->
@@ -32,12 +60,12 @@ setBinBytesToString ::
     Text ->
     Int ->
     IO (Either AerospikeError ())
-setBinBytesToString as ns set key binName binStrData (fromIntegral -> ttlSec) = 
-    alloca @AerospikeError $ \errTmp -> 
-    TF.withCStringLen binStrData $ \(cBinStrData, fromIntegral -> cBinStrDataLen) -> do
-    status <-
-        toEnum @AerospikeStatus . fromIntegral
-            <$> [C.block| int {
+setBinBytesToString as ns set key binName binStrData (fromIntegral -> ttlSec) =
+    alloca @AerospikeError $ \errTmp ->
+        TF.withCStringLen binStrData $ \(cBinStrData, fromIntegral -> cBinStrDataLen) -> do
+            status <-
+                toEnum @AerospikeStatus . fromIntegral
+                    <$> [C.block| int {
     as_key key;
     as_key_init_raw(&key, $bs-cstr:ns, $bs-cstr:set, $bs-ptr:key, $bs-len:key);
 
@@ -53,9 +81,9 @@ setBinBytesToString as ns set key binName binStrData (fromIntegral -> ttlSec) =
     
     return aerospike_key_put($fptr-ptr:(aerospike* as), $(as_error* errTmp), NULL, &key, &rec);
     }|]
-    case status of
-        AerospikeOk -> return . Right $ ()
-        _ -> Left <$> peek errTmp
+            case status of
+                AerospikeOk -> return . Right $ ()
+                _ -> Left <$> peek errTmp
 
 getBinBytesToStringUpdateTTL ::
     Aerospike ->
@@ -67,11 +95,11 @@ getBinBytesToStringUpdateTTL ::
     IO (Either AerospikeError (Maybe Text))
 getBinBytesToStringUpdateTTL as ns set key bin (fromIntegral -> ttlSec) =
     alloca @AerospikeError $ \errTmp ->
-    alloca @CString $ \strTmp ->
-    alloca @CInt $ \strLenTmp -> do
-    status <-
-        toEnum @AerospikeStatus . fromIntegral
-            <$> [C.block| int {
+        alloca @CString $ \strTmp ->
+            alloca @CInt $ \strLenTmp -> do
+                status <-
+                    toEnum @AerospikeStatus . fromIntegral
+                        <$> [C.block| int {
     as_key key;
     as_key_init_raw(&key, $bs-cstr:ns, $bs-cstr:set, $bs-ptr:key, $bs-len:key);
 
@@ -109,12 +137,389 @@ getBinBytesToStringUpdateTTL as ns set key bin (fromIntegral -> ttlSec) =
     return status;
     //as_record_destroy(rec); is not needed - rec on stack
     }|]
+                case status of
+                    AerospikeOk -> do
+                        str <- peek strTmp
+                        len <- peek strLenTmp
+                        txt <- TF.peekCStringLen (str, fromIntegral len)
+                        return . Right . Just $ txt
+                    AerospikeErrBinNotFound -> pure $ Right Nothing
+                    AerospikeErrRecordNotFound -> pure $ Right Nothing
+                    _ -> Left <$> peek errTmp
+
+mkAsBatchRecords :: Int -> IO AsBatchRecords
+mkAsBatchRecords keys = do
+    let ckeys = toEnum @Word32 keys
+    records <- [C.block| as_batch_records* { return as_batch_records_create($(uint32_t ckeys)); }|]
+    finalizer <- [C.exp|void (*as_batch_records_destroy)(as_batch_records*) { &as_batch_records_destroy }|]
+    AsBatchRecords <$> newForeignPtr finalizer records
+
+keyGet ::
+    forall a.
+    (FromAsBins a) =>
+    Aerospike ->
+    Maybe ReadPolicy ->
+    Key ->
+    IO (Either AerospikeError (Maybe (Record a)))
+keyGet as policy key = evalContT $ do
+    asKey <- newKey key
+    errTmp <- ContT $ alloca @AerospikeError
+
+    let hasPolicy = fromBool @CBool $ isJust policy
+
+    let
+        initPolicy :: Ptr AsPolicyRead -> IO ()
+        initPolicy ptr = forM_ policy $ \p -> initReadPolicy ptr p
+
+    recordPtr <-
+        lift
+            [C.block| as_record* {
+                as_record* r = NULL;
+                as_policy_read read_policy;
+
+                $fun:(void (*initPolicy)(as_policy_read*))(&read_policy);
+
+                as_status status = aerospike_key_get(
+                    $fptr-ptr:(aerospike* as),
+                    $(as_error* errTmp),
+                    $(bool hasPolicy) ? &read_policy : NULL,
+                    $fptr-ptr:(as_key* asKey),
+                    &r
+                );
+
+                return status == AEROSPIKE_OK ? r : NULL;
+            }|]
+
+    if recordPtr /= nullPtr
+        then lift $ do
+            record <- parseRecord recordPtr
+            [C.block| void { as_record_destroy($(as_record* recordPtr)); }|]
+            pure $ Right record
+        else lift $ Left <$> peek errTmp
+
+{- |
+Perform multiple read requests for given keys. Keys may be from different
+namespaces and sets, but notice that read across those keys is not transactional.
+All read records will be return in same order as specified keys.
+-}
+keyBatchedGet ::
+    forall a.
+    (FromAsBins a) =>
+    Aerospike ->
+    Maybe BatchPolicy ->
+    [Key] ->
+    IO (Either AerospikeError [Maybe (Record a)])
+keyBatchedGet as policy keys = evalContT $ do
+    let keysLen = length keys
+    let ckeysLen = toEnum @Word32 keysLen
+    let hasPolicy = fromBool @CBool $ isJust policy
+
+    errTmp <- ContT $ alloca @AerospikeError
+    records <- lift $ mkAsBatchRecords keysLen
+
+    forM_ keys $ \key -> do
+        asKeyPtr <-
+            lift
+                [C.block| as_key* {
+                as_batch_read_record* record = as_batch_read_reserve($fptr-ptr:(as_batch_records* records));
+                record->read_all_bins = true;
+                return &record->key;
+                }|]
+
+        asKey <- lift $ AsKey <$> newForeignPtr_ asKeyPtr
+        initKey asKey key
+
+    let
+        initPolicy :: Ptr AsPolicyBatch -> IO ()
+        initPolicy ptr = forM_ policy $ \p -> initBatchPolicy ptr p
+
+    status <-
+        lift $
+            statusFromCSide
+                <$> [C.block| int { 
+        as_policy_batch p;
+        $fun:(void (*initPolicy)(as_policy_batch*))(&p);
+        
+        return aerospike_batch_read(
+            $fptr-ptr:(aerospike* as), 
+            $(as_error* errTmp), 
+            $(bool hasPolicy) ? &p : NULL, 
+            $fptr-ptr:(as_batch_records* records)
+        );
+        }|]
+
     case status of
         AerospikeOk -> do
-            str <- peek strTmp
-            len <- peek strLenTmp
-            txt <-  TF.peekCStringLen (str, fromIntegral len)
-            return . Right . Just $ txt
-        AerospikeErrBinNotFound -> pure $ Right Nothing
-        AerospikeErrRecordNotFound -> pure $ Right Nothing
-        _ -> Left <$> peek errTmp
+            binName <- ContT $ alloca @CString
+            binNameLen <- ContT $ alloca @CInt
+            let AsBatchRecords fRecords = records
+            recordsPtr <- ContT $ withForeignPtr fRecords
+            -- TODO: check records.list.size instead of rely on key_len?
+            res <- forM [0 .. ckeysLen - 1] $ \i -> lift $ do
+                status <-
+                    statusFromCSide
+                        <$> [C.block| int {
+                    as_vector* list = &$(as_batch_records* recordsPtr)->list;
+                    as_batch_read_record* r = as_vector_get(list, $(uint32_t i));
+                    return r->result;         
+                    }|]
+
+                case status of
+                    AerospikeOk ->
+                        do
+                            recordPtr <-
+                                [C.block| as_record* {
+                                    as_vector* list = &$(as_batch_records* recordsPtr)->list;
+                                    as_batch_read_record* r = as_vector_get(list, $(uint32_t i));
+                                    return &r->record;                   
+                                }|]
+
+                            parseRecord recordPtr
+                    _ -> pure Nothing
+            return . Right $ res
+        _ -> do
+            err <- lift $ peek errTmp
+            pure $ Left err
+
+statusFromCSide :: CInt -> AerospikeStatus
+statusFromCSide = toEnum @AerospikeStatus . fromIntegral
+
+{- |
+Perform put operation by specified key. Notice that bins, those was not specified in
+in the list will be remain untouchable.
+-}
+keyPut ::
+    forall v.
+    (ToAsBins v) =>
+    Aerospike ->
+    Maybe WritePolicy ->
+    Key ->
+    v ->
+    IO (Either AerospikeError ())
+keyPut as policy key v = evalContT $ do
+    let bins = toAsBins v
+    let binsLen = toEnum @Word32 $ length bins
+    let hasPolicy = fromBool @CBool $ isJust policy
+    asRecordPtr <- lift [C.block| as_record* { return as_record_new($(uint32_t binsLen)); }|]
+    finalizer <- lift [C.exp|void (*as_record_destroy)(as_record*) { &as_record_destroy }|]
+    asRecord <- lift $ AsRecord <$> newForeignPtr finalizer asRecordPtr
+
+    let
+        initPolicy :: Ptr AsPolicyWrite -> IO ()
+        initPolicy ptr = forM_ policy $ \p -> initWritePolicy ptr p
+
+    forM_ bins $ \(binName, binValue) -> do
+        val <- createVal binValue
+        cBinName <- ContT $ BS.useAsCString $ binNameBS binName
+        lift
+            [C.block| void {
+                as_record_set($fptr-ptr:(as_record* asRecord), $(char* cBinName), (as_bin_value*)$(as_val* val));
+            }|]
+
+    asKey <- newKey key
+    errTmp <- ContT $ alloca @AerospikeError
+
+    status <-
+        lift $
+            statusFromCSide
+                <$> [C.block| int {
+                as_policy_write write_policy;
+
+                $fun:(void (*initPolicy)(as_policy_write*))(&write_policy);
+
+                return aerospike_key_put(
+                    $fptr-ptr:(aerospike* as),
+                    $(as_error* errTmp),
+                    $(bool hasPolicy) ? &write_policy : NULL,
+                    $fptr-ptr:(as_key* asKey),
+                    $fptr-ptr:(as_record* asRecord)
+                );
+            }|]
+
+    case status of
+        AerospikeOk -> pure $ Right ()
+        _ -> do
+            err <- lift $ peek errTmp
+            pure $ Left err
+
+{- |
+Perform atomic multiple sequential operations on the given key.
+Returned Record will contain all requested bins, that was declared in
+[Operator] in specified order (TODO: validate).
+-}
+keyOperate ::
+    forall a.
+    (FromAsBins a) =>
+    Aerospike ->
+    Maybe OperatePolicy ->
+    Key ->
+    [Operator] ->
+    IO (Either AerospikeError (Maybe (Record a)))
+keyOperate as policy key ops = evalContT $ do
+    let opsLen = toEnum @Word32 $ length ops
+    asKey <- newKey key
+    asOperationsPtr <- lift [C.block| as_operations* { return as_operations_new($(uint32_t opsLen)); }|]
+    finalizer <- lift [C.exp|void (*as_operations_destroy)(as_operations*) { &as_operations_destroy }|]
+    asOperations <- lift $ AsOperations <$> newForeignPtr finalizer asOperationsPtr
+
+    forM_ ops $ \case
+        Read ReadAll -> lift [C.block| void { as_operations_add_read_all($fptr-ptr:(as_operations* asOperations)); }|]
+        Read (ReadSome binNames) -> forM_ binNames $ \binName -> do
+            bin <- ContT $ BS.useAsCString $ binNameBS binName
+            lift
+                [C.block| void {
+                as_operations_add_read($fptr-ptr:(as_operations* asOperations), $(char* bin));
+            }|]
+        Read (ReadOne binName) -> do
+            bin <- ContT $ BS.useAsCString $ binNameBS binName
+            lift
+                [C.block| void {
+                as_operations_add_read($fptr-ptr:(as_operations* asOperations), $(char* bin));
+            }|]
+        Write op -> do
+            bin <- ContT $ BS.useAsCString $ binNameBS op.binName
+            asVal <- createVal op.value
+            lift
+                [C.block| void {
+                as_operations_add_write(
+                    $fptr-ptr:(as_operations* asOperations), 
+                    $(char* bin), 
+                    (as_bin_value*)$(as_val* asVal)
+                );
+            }|]
+        Touch ->
+            lift
+                [C.block| void {
+                as_operations_add_touch($fptr-ptr:(as_operations* asOperations));
+            }|]
+        Modify binName op -> do
+            bin <- ContT $ BS.useAsCString $ binNameBS binName
+
+            case op of
+                Incr delta -> do
+                    lift
+                        [C.block| void {
+                        as_operations_add_incr(
+                            $fptr-ptr:(as_operations* asOperations),
+                            $(char* bin), 
+                            $(int64_t delta)
+                        );
+                        }|]
+                RAppend bs -> do
+                    (bsVal, bsLen) <- ContT $ BS.useAsCStringLen bs
+                    let cbsLen = toEnum @Word32 bsLen
+                    lift
+                        [C.block| void {
+                            as_operations_add_append_raw(
+                                $fptr-ptr:(as_operations* asOperations),
+                                $(char* bin),
+                                (uint8_t*)$(char* bsVal),
+                                $(uint32_t cbsLen)
+                            );
+                        }|]
+                RPrepend bs -> do
+                    (bsVal, bsLen) <- ContT $ BS.useAsCStringLen bs
+                    let cbsLen = toEnum @Word32 bsLen
+                    lift
+                        [C.block| void {
+                            as_operations_add_prepend_raw(
+                                $fptr-ptr:(as_operations* asOperations),
+                                $(char* bin),
+                                (uint8_t*)$(char* bsVal),
+                                $(uint32_t cbsLen)
+                            );
+                        }|]
+                SAppend text -> do
+                    textPtr <- ContT $ BS.useAsCString $ encodeUtf8 text
+                    lift
+                        [C.block| void {
+                            as_operations_add_append_str(
+                                $fptr-ptr:(as_operations* asOperations),
+                                $(char* bin),
+                                $(char* textPtr)
+                            );
+                        }|]
+                SPrepend text -> do
+                    textPtr <- ContT $ BS.useAsCString $ encodeUtf8 text
+                    lift
+                        [C.block| void {
+                            as_operations_add_prepend_str(
+                                $fptr-ptr:(as_operations* asOperations),
+                                $(char* bin),
+                                $(char* textPtr)
+                            );
+                        }|]
+                LAppend values -> do
+                    valuesPtr <- createVal $ VList values
+                    lift
+                        [C.block| void {
+                            as_operations_list_append_items(
+                                $fptr-ptr:(as_operations* asOperations),
+                                $(char* bin),
+                                NULL,
+                                NULL,
+                                (as_list*)$(as_val* valuesPtr)
+                            );
+                        }|]
+                MPut values -> do
+                    valuesPtr <- createVal $ VMap values
+                    lift
+                        [C.block| void {
+                            as_operations_map_put_items(
+                                $fptr-ptr:(as_operations* asOperations),
+                                $(char* bin),
+                                NULL,
+                                NULL,
+                                (as_map*)$(as_val* valuesPtr)
+                            );
+                        }|]
+        SetTTL ttl -> lift $ do
+            let ttlVal = case ttl of
+                    DefaultTTL -> [C.pure| uint32_t { AS_RECORD_DEFAULT_TTL } |]
+                    NoExpireTTL -> [C.pure| uint32_t { AS_RECORD_NO_EXPIRE_TTL } |]
+                    NoChangeTTL -> [C.pure| uint32_t { AS_RECORD_NO_CHANGE_TTL }|]
+                    ClientDefaultTTL -> [C.pure| uint32_t { AS_RECORD_CLIENT_DEFAULT_TTL }|]
+                    ManualSecs secs -> secs
+
+            [C.block| void {
+                $fptr-ptr:(as_operations* asOperations)->ttl = $(uint32_t ttlVal);
+            }|]
+        Delete ->
+            lift
+                [C.block| void {
+                as_operations_add_delete($fptr-ptr:(as_operations* asOperations));
+            }|]
+
+    let
+        hasPolicy = fromBool @CBool $ isJust policy
+
+        initPolicy :: Ptr AsPolicyOperate -> IO ()
+        initPolicy ptr = forM_ policy $ \p -> initOperatePolicy ptr p
+
+    errTmp <- ContT $ alloca @AerospikeError
+    recordPtr <-
+        lift
+            [C.block| as_record* {
+                as_record* r = NULL;
+                as_policy_operate p;
+
+                $fun:(void (*initPolicy)(as_policy_operate*))(&p);
+
+                as_status status = aerospike_key_operate(
+                    $fptr-ptr:(aerospike* as),
+                    $(as_error* errTmp),
+                    $(bool hasPolicy) ? &p : NULL,
+                    $fptr-ptr:(as_key* asKey),
+                    $fptr-ptr:(as_operations* asOperations),
+                    &r
+                );
+
+                return status == AEROSPIKE_OK ? r : NULL;
+            }|]
+
+    if recordPtr /= nullPtr
+        then lift $ do
+            record <- parseRecord recordPtr
+            [C.block| void { as_record_destroy($(as_record* recordPtr)); }|]
+            pure $ Right record
+        else lift $ Left <$> peek errTmp

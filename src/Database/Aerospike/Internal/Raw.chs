@@ -15,6 +15,7 @@ import Control.Exception (Exception)
 #include <aerospike/aerospike.h>
 #include <aerospike/as_status.h>
 #include <aerospike/as_log.h>
+#include <aerospike/aerospike_batch.h>
 
 {# context lib="aerospike" #}
 
@@ -23,6 +24,36 @@ import Control.Exception (Exception)
 {# enum as_log_level as AerospikeLogLevel {underscoreToCase} deriving (Eq, Show) #}
 
 {# pointer *aerospike as Aerospike foreign newtype #}
+
+{# pointer *as_batch_records as AsBatchRecords foreign newtype #}
+
+{# pointer *as_record as AsRecord foreign newtype #}
+
+{# pointer *as_bin_value as AsBinValue foreign newtype #}
+
+{# pointer *as_val as AsVal foreign newtype #}
+
+{# pointer *as_list as AsList foreign newtype #}
+
+{# pointer *as_map as AsMap foreign newtype #}
+
+{# pointer *as_key as AsKey foreign newtype #}
+
+{# pointer *as_operations as AsOperations foreign newtype #}
+
+{# pointer *as_policy_base as AsPolicyBase foreign newtype #}
+
+{# pointer *as_policy_key as AsPolicyKey foreign newtype #}
+
+{# pointer *as_policy_exists as AsPolicyExists foreign newtype #}
+
+{# pointer *as_policy_read as AsPolicyRead foreign newtype #}
+
+{# pointer *as_policy_write as AsPolicyWrite foreign newtype #}
+
+{# pointer *as_policy_batch as AsPolicyBatch foreign newtype #}
+
+{# pointer *as_policy_operate as AsPolicyOperate foreign newtype #}
 
 data AerospikeError = AerospikeError
   { code :: AerospikeStatus
