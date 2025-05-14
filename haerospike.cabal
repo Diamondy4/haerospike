@@ -84,13 +84,11 @@ executable aerospike-example-exe
   hs-source-dirs: example
   ghc-options:    -dynamic -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-    , base              >=4.7 && <5
+    , base          >=4.7 && <5
     , bytestring
     , containers
     , generics-sop
     , haerospike
-    , inline-c
-    , template-haskell
     , text
     , vector
 
@@ -105,7 +103,7 @@ test-suite aerospike-test
   hs-source-dirs: test
   ghc-options:    -dynamic -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-    , base              >=4.7 && <5
+    , base            >=4.7 && <5
     , bytestring
     , containers
     , extra
@@ -114,11 +112,9 @@ test-suite aerospike-test
     , hedgehog
     , hspec
     , hspec-hedgehog
-    , inline-c
     , mmorph
     , mtl
     , resourcet
-    , template-haskell
     , text
     , vec
     , vector

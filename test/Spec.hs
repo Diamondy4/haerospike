@@ -4,10 +4,9 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-import Control.Exception (SomeException, catch)
 import Control.Monad (forM, forM_, void)
 import Control.Monad.Morph (MFunctor (hoist))
-import Control.Monad.Trans (MonadIO (liftIO), MonadTrans (..))
+import Control.Monad.Trans (MonadIO (liftIO))
 import Control.Monad.Trans.Resource (MonadResource, register, release, runResourceT)
 import Data.ByteString qualified as BS
 import Data.Either (isRight)
@@ -28,20 +27,13 @@ import Database.Aerospike.Record (BinName, FromAsBins (..), RawBins, Record (..)
 import Database.Aerospike.Value (MapKey (..), Value (..))
 import GHC.Generics qualified as GHC
 import Generics.SOP qualified as SOP
-import Hedgehog (Gen, MonadTest, PropertyT, assert, forAll, property, (===))
+import Hedgehog (Gen, MonadTest, PropertyT, assert, forAll, (===))
 import Hedgehog.Gen qualified as Gen
-import Hedgehog.Internal.Property (Log (Footnote), failWith, writeLog)
+import Hedgehog.Internal.Property (failWith)
 import Hedgehog.Internal.Range (constantBounded, linear)
 import Helpers
 import Test.Hspec (describe, hspec, it)
 import Test.Hspec.Hedgehog (hedgehog, modifyMaxSuccess)
-
-validKey :: Value -> Bool
-validKey VNil = False
-validKey (VBoolean _) = False
-validKey (VMap _) = False
-validKey (VList _) = False
-validKey _ = True
 
 textGen :: Gen Text
 textGen = Gen.text (linear 0 300) (Gen.filter ('\0' /=) Gen.ascii)
